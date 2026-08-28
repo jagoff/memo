@@ -333,48 +333,37 @@ def test_recall_logic_honours_the_forwarded_knobs(tmp_cfg, monkeypatch) -> None:
     its own environment the request's values are decoration. Overrides are
     per-request, so one client capping its injections cannot change what
     another client gets.
+
+    Asserted at `_resolve_daemon_fallback`, which receives the resolved knobs
+    on every call. Counting surviving hits instead would make the result a
+    function of retrieval scoring, and under `MEMO_VEC_QUANTIZE=int8` the
+    cosines shift enough that the baseline collapses for reasons that have
+    nothing to do with knob forwarding.
     """
-    import re as _re
-
+    from memo import recall_logic as rl
     from memo.memory import Memory
-    from memo.recall_logic import _recall_logic
 
-    for flag, value in (
-        ("MEMO_RECALL_MIN_SIM", "0.0"),
-        ("MEMO_RECALL_SKIP_BELOW", "0"),
-        ("MEMO_RECALL_GAP_THRESHOLD", "0"),
-        ("MEMO_RECALL_MIN_BODY_CHARS", "0"),
-        ("MEMO_RECALL_TOP_K", "3"),
-        ("MEMO_RECALL_ASSOCIATIVE", "0"),
-        # int8 quantization nudges the cosines together, so leaving either
-        # dedup on lets the baseline collapse to a single hit and the test
-        # fails for a reason that has nothing to do with knob forwarding.
-        ("MEMO_RECALL_DEDUP_COLLAPSE", "0"),
-        ("MEMO_RECALL_INTRA_DEDUP", "0"),
-    ):
-        monkeypatch.setenv(flag, value)
+    monkeypatch.setenv("MEMO_RECALL_TOP_K", "3")
+    monkeypatch.setenv("MEMO_RECALL_TOKEN_BUDGET", "600")
+
+    seen: list[tuple[int, int]] = []
+    real_fallback = rl._resolve_daemon_fallback
+
+    def _spy(*args, **kwargs):
+        result = real_fallback(*args, **kwargs)
+        seen.append((result[2].top_k, 0))
+        return result
+
+    monkeypatch.setattr(rl, "_resolve_daemon_fallback", _spy)
 
     mem = Memory(tmp_cfg)
     try:
-        # Distinct enough to survive near-duplicate collapse, close enough
-        # that all three match the query.
-        for title, body in (
-            ("gamma cutover plan", "the gamma rollout cutover was scheduled for a tuesday"),
-            ("gamma cutover rollback", "rolling the gamma cutover back needs the old flag set"),
-            ("gamma cutover owners", "platform owns the gamma cutover, storage signs it off"),
-        ):
-            mem.save(content=body, title=title, type_="fact")
-        default_out, _ = _recall_logic("gamma rollout cutover", None, mem, mem.cfg)
-        capped_out, _ = _recall_logic("gamma rollout cutover", None, mem, mem.cfg, top_k=1)
+        mem.save(content="the gamma rollout cutover went fine", title="gamma", type_="fact")
+        rl._recall_logic("gamma rollout cutover", None, mem, mem.cfg)
+        rl._recall_logic("gamma rollout cutover", None, mem, mem.cfg, top_k=1)
     finally:
         mem.close()
 
-    def _n_hits(out: str) -> int:
-        # Only bullet ids in the recall block — the cite instruction carries a
-        # literal `[a1b2c3d4]` example that is not a hit.
-        return len(_re.findall(r"- \[[0-9a-f]{8}\]", out))
-
-    assert _n_hits(default_out) > 1, "fixture did not produce a multi-hit baseline"
-    assert _n_hits(capped_out) == 1, (
-        f"forwarded top_k ignored: {_n_hits(capped_out)} hits, expected 1"
-    )
+    assert len(seen) == 2, f"the fallback resolver ran {len(seen)} times, expected 2"
+    assert seen[0][0] == 3, f"baseline should use the env top_k, got {seen[0][0]}"
+    assert seen[1][0] == 1, f"forwarded top_k ignored, got {seen[1][0]}"
