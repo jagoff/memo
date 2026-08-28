@@ -26,8 +26,25 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   before this field carry no fingerprint and are treated as not-comparable,
   never as a match.
 
-||||||| parent of 693fe14a (fix: stop the tuner charging corpus drift to the knob it is judging)
-||||||| 75ef32e8
+- **`noise@k` was structurally blind to the failure mode it is named for.**
+  `_hit_is_noise` fired only on a hit carrying a noise TAG, sitting under a
+  noise PATH fragment, or listed in the prompt's `avoid_ids`. The curated set
+  ships three prompts whose `_note` calls them "Noise probe" — culinary,
+  weather, physics — and none of them can produce such a hit: whatever comes
+  back is an ordinary dev memory with ordinary tags. So they scored zero noise
+  no matter what surfaced, and the gate read a clean `noise@5 0.000` while
+  `memo debug-recall "best pasta recipe for tonight"` injected 3 memories. The
+  new schema-additive `noise_probe` label makes the claim measurable: a prompt
+  that declares nothing in the corpus answers it counts every top-K hit as
+  noise. It is an explicit field rather than an inference from
+  `relevant=false and not expect_ids`, because the two ⛔ AVOID coverage probes
+  and the as-of probe share exactly that shape and their own labels state they
+  must never perturb precision@K / noise@K. Measured on the live index: `noise@5`
+  goes 0.000 → **0.041** at config `L live/vec/0.5` with `prec@5` unchanged at
+  0.530 — the recall did not regress, the instrument stopped lying. The
+  machine-local gate baseline must be reseeded (`--update-baseline`) for the
+  same reason.
+
 - **`memo tokens` printed a proxy saving of "386295.8% cost".** The holdout
   A/B panel rendered its headline ratio at any sample size, qualifying a thin
   one with the word "provisional" but printing the number anyway. Because the
