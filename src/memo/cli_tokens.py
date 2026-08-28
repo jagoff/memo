@@ -210,10 +210,16 @@ def _proxy_panel(proxy: dict) -> Panel:
 
 
 def _by_transform_table(proxy: dict) -> Table:
-    tbl = Table(title="by transform", show_lines=False)
+    # `saved_by` is an unweighted chars/4 diff of the text a transform removed.
+    # The proxy panel's headline saving is a cache-weighted BILLED ratio, and
+    # the two are different currencies: prefix content a transform removes is
+    # credited here at full value every turn while the counterfactual bills it
+    # at the 0.1x cache-read weight. Naming the unit keeps the reader from
+    # reading this table as a decomposition of the billed saving.
+    tbl = Table(title="by transform — raw text removed, not billed saving", show_lines=False)
     tbl.add_column("transform")
     tbl.add_column("requests", justify="right")
-    tbl.add_column("share of savings", justify="right")
+    tbl.add_column("share of text removed", justify="right")
     for name, stats in sorted(
         proxy["by_transform"].items(), key=lambda kv: kv[1]["n"], reverse=True
     ):
@@ -228,7 +234,7 @@ def _by_transform_table(proxy: dict) -> Table:
     "--by-transform",
     "by_transform",
     is_flag=True,
-    help="Break the measured proxy saving down per transform.",
+    help="Break down which transforms removed the most text (raw, not billed cost).",
 )
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 def tokens_cmd(*, by_transform: bool = False, as_json: bool = False) -> None:
