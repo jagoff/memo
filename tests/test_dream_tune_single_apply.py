@@ -121,7 +121,7 @@ def test_tuning_pass_sets_cooldown_on_online_revert(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(dream_tune_online, "online_fraction", lambda sd, v, **k: (0.40, 50))
     monkeypatch.setattr(dream_tune, "write_overlay", lambda sd, params, meta: None)
-    monkeypatch.setattr(dream_tune, "save_baseline", lambda sd, m: None)
+    monkeypatch.setattr(dream_tune, "save_baseline", lambda sd, m, **kw: None)
     monkeypatch.setattr(
         dream_tune, "measure", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no measure"))
     )

@@ -491,3 +491,102 @@ def test_baseline_savers_registered_for_rank_knobs(tmp_path):
         saver = dt._KNOB_BASELINE_SAVERS[knob]
         saver(tmp_path, {"precision_at_k": 0.3, "noise_at_k": 0.0})
         assert dt.load_rank_knob_baseline(tmp_path, knob)["precision_at_k"] == 0.3
+
+
+# --- min_sim rollback guard: corpus drift must not be charged to the knob ----
+
+
+def test_min_sim_guard_does_not_roll_back_on_corpus_drift(tmp_path, monkeypatch):
+    """Live incident 2026-08-27: one nightly pass CONFIRMED min_sim 0.5->0.4 on
+    the online proof loop (0.0 -> 0.9362, n=47) and rolled it back in the same
+    pass. The offline guard compared a fresh measurement against
+    `eval/dream_baseline.json` written six days and thousands of memories
+    earlier, with `_regressed`'s 1e-9 tolerance — so any precision drift from a
+    growing corpus reverts the knob. The baseline is a snapshot of a corpus
+    that no longer exists; it cannot answer "is this knob worse".
+
+    The comparable question is the counterfactual on TODAY's corpus: the
+    current floor against the floor it replaced. When they measure the same,
+    the knob is innocent whatever the stale snapshot says."""
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(dt, "build_labels", lambda cfg, **k: _one_label())
+    # overlay history: min_sim moved 0.5 -> 0.4, so _meta.prev holds 0.5
+    dt.write_overlay(tmp_path, {"MEMO_RECALL_MIN_SIM": 0.5}, {"set_by": "dream"})
+    dt.write_overlay(tmp_path, {"MEMO_RECALL_MIN_SIM": 0.4}, {"set_by": "dream"})
+    # a stale baseline from a corpus that measured much better than today's
+    dt.save_baseline(tmp_path, {"precision_at_k": 0.9, "noise_at_k": 0.0})
+    # today both floors measure the same: the knob changed nothing
+    monkeypatch.setattr(dt, "measure", lambda *a, **k: _metrics(0.3))
+    _flat_min_sim(monkeypatch)
+
+    res = dt.run_tuning_pass(_cfg(tmp_path), _StubMem(), k=5)
+    assert res["status"] != "rolled_back"
+    assert dt.read_overlay(tmp_path)["MEMO_RECALL_MIN_SIM"] == 0.4
+
+
+def test_min_sim_guard_still_rolls_back_a_genuinely_worse_floor(tmp_path, monkeypatch):
+    """The counterfactual must not defang the guard: when the CURRENT floor
+    measures worse than the floor it replaced, on the same corpus and in the
+    same run, that is the knob's own doing and it still reverts."""
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(dt, "build_labels", lambda cfg, **k: _one_label())
+    dt.write_overlay(tmp_path, {"MEMO_RECALL_MIN_SIM": 0.5}, {"set_by": "dream"})
+    dt.write_overlay(tmp_path, {"MEMO_RECALL_MIN_SIM": 0.4}, {"set_by": "dream"})
+    dt.save_baseline(tmp_path, {"precision_at_k": 0.9, "noise_at_k": 0.0})
+    # current floor (0.4) is worse than its predecessor (0.5), measured now
+    monkeypatch.setattr(
+        dt, "measure", lambda mem, labels, *, k, floor: _metrics(0.1 if floor == 0.4 else 0.6)
+    )
+
+    def _boom(*a, **k):
+        raise AssertionError("no search may run after the rollback guard fires")
+
+    monkeypatch.setattr(dt, "search_min_sim", _boom)
+
+    res = dt.run_tuning_pass(_cfg(tmp_path), _StubMem(), k=5)
+    assert res["status"] == "rolled_back"
+    assert res["restored"] == {"MEMO_RECALL_MIN_SIM": 0.5}
+
+
+def test_min_sim_guard_trusts_a_baseline_from_the_same_corpus(tmp_path, monkeypatch):
+    """When the stored baseline carries the CURRENT corpus fingerprint it is a
+    valid comparison and stays the cheap path — one measurement, not two."""
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(dt, "build_labels", lambda cfg, **k: _one_label())
+    monkeypatch.setattr(dt, "_corpus_fingerprint", lambda mem: "42:2026-08-28")
+    dt.write_overlay(tmp_path, {"MEMO_RECALL_MIN_SIM": 0.5}, {"set_by": "dream"})
+    dt.write_overlay(tmp_path, {"MEMO_RECALL_MIN_SIM": 0.4}, {"set_by": "dream"})
+    dt.save_baseline(tmp_path, {"precision_at_k": 0.9, "noise_at_k": 0.0}, mem=_StubMem())
+
+    calls: list[float] = []
+
+    def _measure(mem, labels, *, k, floor):
+        calls.append(floor)
+        return _metrics(0.1)
+
+    monkeypatch.setattr(dt, "measure", _measure)
+
+    def _boom(*a, **k):
+        raise AssertionError("no search may run after the rollback guard fires")
+
+    monkeypatch.setattr(dt, "search_min_sim", _boom)
+
+    res = dt.run_tuning_pass(_cfg(tmp_path), _StubMem(), k=5)
+    assert res["status"] == "rolled_back"
+    assert calls == [0.4], "a same-corpus baseline needs no counterfactual measurement"
+
+
+def test_save_baseline_stamps_the_corpus_fingerprint(tmp_path, monkeypatch):
+    monkeypatch.setattr(dt, "_corpus_fingerprint", lambda mem: "7:2026-08-28T00:00:00")
+    dt.save_baseline(tmp_path, {"precision_at_k": 0.3, "noise_at_k": 0.0}, mem=_StubMem())
+    assert dt.load_baseline(tmp_path)["corpus_fingerprint"] == "7:2026-08-28T00:00:00"
+    # the metrics stay readable exactly as before
+    assert dt.load_baseline(tmp_path)["precision_at_k"] == 0.3
+
+
+def test_save_baseline_without_a_mem_stays_backward_compatible(tmp_path):
+    """Callers that have no Memory handy (and every baseline written before
+    this field existed) produce a baseline with no fingerprint, which the
+    guard must treat as not-comparable rather than as a match."""
+    dt.save_baseline(tmp_path, {"precision_at_k": 0.3, "noise_at_k": 0.0})
+    assert "corpus_fingerprint" not in dt.load_baseline(tmp_path)

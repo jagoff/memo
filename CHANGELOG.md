@@ -52,6 +52,21 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   already honest; only its label was not. Now titled "raw text removed, not
   billed saving", with the column and `--help` matching.
 
+- **The nightly tuner confirmed a knob and rolled it back in the same pass.**
+  On 2026-08-27 one `dream` run CONFIRMED `MEMO_RECALL_MIN_SIM` 0.5 → 0.4 on
+  the online proof loop (0.0 → 0.9362, n=47) and reverted it minutes later.
+  The offline rollback guard compared a fresh measurement against
+  `eval/dream_baseline.json` written six days and thousands of memories
+  earlier, under `_regressed`'s 1e-9 tolerance — so it measured corpus drift
+  and charged it to the knob. `dream_baseline.json` now records the
+  `corpus_fingerprint` it describes (`recall_baseline.json` already did). The
+  guard trusts the stored snapshot only while it still describes the live
+  corpus; once it doesn't, it asks the comparable question instead — the
+  current floor against the floor it replaced, both measured on today's
+  corpus, which isolates the knob from the corpus entirely. Baselines written
+  before this field carry no fingerprint and are treated as not-comparable,
+  never as a match.
+
 - **The session-start briefing spent 100% of its budget on one truncated
   section and delivered zero durable memory.** `compose_unified_briefing`
   concatenated every section and then hard-truncated the join at 900 chars.
