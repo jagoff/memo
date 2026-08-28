@@ -1841,7 +1841,9 @@ def test_a_deliberately_unscored_prompt_is_not_a_noise_probe():
     they must NEVER perturb precision@K / noise@K — they score avoid@k only.
     Keying off that shape would have silently started scoring them, so the
     signal is an explicit field, not an inference."""
-    labels = LabelSet(prompts=[Prompt(text="let's cut a release now", expect_avoid_ids=["de5df482"])])
+    labels = LabelSet(
+        prompts=[Prompt(text="let's cut a release now", expect_avoid_ids=["de5df482"])]
+    )
     prompt = labels.prompts[0]
     hit = SimpleNamespace(id="deadbeef", tags=["project:memo"], path="/vault/notes/x.md")
     assert prompt.noise_probe is False
