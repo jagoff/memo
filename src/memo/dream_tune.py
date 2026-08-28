@@ -171,6 +171,35 @@ def save_baseline(state_dir: Path, metrics: dict[str, float], *, mem: Any = None
     p.write_text(json.dumps(doc, indent=2), encoding="utf-8")
 
 
+def _live_floor_regressed(
+    state_dir: Path,
+    mem: Any,
+    labels: Any,
+    *,
+    baseline: dict[str, Any],
+    live: dict[str, float],
+    current: float,
+    k: int,
+    measure: Any,
+) -> bool:
+    """Has the applied min_sim floor actually regressed — as opposed to the corpus moving?
+
+    The stored baseline answers that only while it still describes the live
+    corpus. Once it doesn't, comparing against it measures corpus drift and
+    charges it to the knob, which is how one pass CONFIRMED 0.5 -> 0.4 on the
+    online proof loop and rolled it back minutes later. So when the stamp no
+    longer matches, ask the comparable question instead: the current floor
+    against the floor it replaced, both measured on today's corpus.
+    """
+    stamp = baseline.get("corpus_fingerprint")
+    if stamp and stamp == _corpus_fingerprint(mem):
+        return bool(_regressed(live, baseline))
+    prev_floor = _prev_floor(state_dir)
+    if prev_floor is None or prev_floor == current:
+        return False
+    return bool(_regressed(live, measure(mem, labels, k=k, floor=prev_floor)))
+
+
 def _prev_floor(state_dir: Path) -> float | None:
     """The min_sim value the live overlay replaced, i.e. what a rollback would
     restore. `None` when the overlay has no prior scalar for the knob — then
@@ -442,16 +471,16 @@ def run_tuning_pass(
         baseline = load_baseline(cfg.state_dir)
         if baseline is not None:
             live = measure(mem, labels, k=k, floor=current)
-            stamp = baseline.get("corpus_fingerprint")
-            if stamp and stamp == _corpus_fingerprint(mem):
-                worse = _regressed(live, baseline)
-            else:
-                prev_floor = _prev_floor(cfg.state_dir)
-                worse = (
-                    prev_floor is not None
-                    and prev_floor != current
-                    and _regressed(live, measure(mem, labels, k=k, floor=prev_floor))
-                )
+            worse = _live_floor_regressed(
+                cfg.state_dir,
+                mem,
+                labels,
+                baseline=baseline,
+                live=live,
+                current=current,
+                k=k,
+                measure=measure,
+            )
             if worse and not dry_run:
                 rolled = rollback_overlay(cfg.state_dir)
                 if rolled is not None:
