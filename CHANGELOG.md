@@ -11,6 +11,19 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ### Fixed
 
+- **`memo debug-recall` reported hits on a channel the live hook does not
+  use.** It resolved its own exclusions from `MEMO_RECALL_EXCLUDE_REFERENCE`
+  alone, missing the Negative Recall branch that drops `failure_pattern` from
+  normal recall — so the diagnostic printed "● injected" for anti-memories the
+  hook suppresses. Measured on a 20-prompt mix drawn from the live recall log:
+  13 of 56 injected rows (23.2%) were `failure_pattern`, and re-running the
+  real AVOID pass on those prompts showed 8 of 13 reach **no channel at all**.
+  The live hook's own log agrees — 429 injected hits across 148 daemon entries
+  contain zero `failure_pattern`. Exclusions now come from the same
+  `_recall_excluded_types()` the hook uses, `--json` reports the full
+  `excluded_types` set instead of a single `exclude_reference` boolean, and the
+  table gained a `type` column so an operator can see why a row was dropped.
+
 - **The session-start briefing spent 100% of its budget on one truncated
   section and delivered zero durable memory.** `compose_unified_briefing`
   concatenated every section and then hard-truncated the join at 900 chars.

@@ -58,7 +58,15 @@ def _run_debug_recall(prompt: str, cwd: str | None) -> dict[str, Any]:
                 project_tag = current_project_tag(cwd)
 
         search_k = top_k * 3 if (project_tag or contextual) else top_k
-        exclude_types = set(REFERENCE_TYPES) if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE") else None
+        # Resolve exclusions through the SAME helper the live hook uses. This
+        # used to read MEMO_RECALL_EXCLUDE_REFERENCE alone, missing the
+        # Negative Recall branch that drops failure_pattern from the normal
+        # section — so the diagnostic reported "● injected" for memories the
+        # hook suppresses, on a channel it does not use.
+        from memo.recall_logic import _recall_excluded_types
+
+        excluded_types = _recall_excluded_types()
+        exclude_types = excluded_types or None
 
         knobs = RankKnobs(
             top_k=top_k,
@@ -146,6 +154,9 @@ def _run_debug_recall(prompt: str, cwd: str | None) -> dict[str, Any]:
                     "id": h.id,
                     "id8": h.id[:8],
                     "title": h.title,
+                    # Without this an operator cannot tell that a row the
+                    # normal section excludes is excluded for its TYPE.
+                    "type": getattr(h, "type", None),
                     "vec_sim": vec_cosine(h),
                     "bm25": bm25_scores.get(h.id),
                     "search_score": e.get("raw_score", h.score),
@@ -191,7 +202,8 @@ def _run_debug_recall(prompt: str, cwd: str | None) -> dict[str, Any]:
             "mmr_lambda": mmr_lambda,
             "synthesis_boost": synthesis_boost,
             "contextual": contextual,
-            "exclude_reference": exclude_types is not None,
+            "exclude_reference": bool(REFERENCE_TYPES & excluded_types),
+            "excluded_types": sorted(excluded_types),
             "candidates": len(candidates),
             "qualifying": len(ranked),
         }
@@ -264,6 +276,7 @@ def _render(result: dict[str, Any], prompt: str) -> None:
     table.add_column("rank", justify="right", no_wrap=True)
     table.add_column("id", no_wrap=True)
     table.add_column("title", max_width=30, overflow="ellipsis")
+    table.add_column("type", no_wrap=True)
     table.add_column("vec", justify="right")
     if show_bm25:
         table.add_column("bm25", justify="right")
@@ -280,6 +293,7 @@ def _render(result: dict[str, Any], prompt: str) -> None:
             rank_cell,
             row["id8"],
             row["title"] or "",
+            row.get("type") or "—",
             _fmt_score(row.get("vec_sim")),
         ]
         if show_bm25:

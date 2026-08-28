@@ -447,3 +447,64 @@ def test_debug_recall_does_not_inflate_access_count(
     finally:
         mem.close()
     assert _access_snapshot(tmp_cfg) != before
+
+
+def test_debug_recall_excludes_what_the_live_hook_excludes(
+    tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure_pattern reaches the ⛔ AVOID block, never the normal section.
+
+    `debug-recall` resolved its own `exclude_types` from
+    MEMO_RECALL_EXCLUDE_REFERENCE alone, missing the Negative Recall branch
+    that drops failure_pattern from normal recall. So the diagnostic showed
+    "● injected" for memories the real hook suppresses — measured at 23.2% of
+    injected rows on a 20-prompt mix, with 8 of 13 reaching no channel at all.
+    A diagnostic that reports a channel the hook does not use is worse than no
+    diagnostic.
+    """
+    from memo.memory import Memory
+
+    _install_keyword_stub(monkeypatch)
+    _seed(tmp_cfg)
+    cfg = Config(
+        data_dir=tmp_cfg.data_dir,
+        vault_path=tmp_cfg.vault_path,
+        state_dir=tmp_cfg.state_dir,
+        embedder_model=_STUB_MODEL,
+        embedder_dims=4,
+        reranker_enabled=False,
+    )
+    mem = Memory(cfg)
+    try:
+        anti = mem.save(
+            content="the alpha rollout was reverted because the flag was never wired",
+            title="alpha rollout anti-memory",
+            type="failure_pattern",
+            auto_project=False,
+        )
+    finally:
+        mem.close()
+
+    env = {**_cli_env(tmp_cfg), "MEMO_NEGATIVE_RECALL_ENABLED": "1"}
+    result = CliRunner().invoke(debug_recall_cmd, [_PROMPT, "--json"], env=env)
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    injected = {h["id"] for h in payload["hits"] if h["injected"]}
+    assert anti.id not in injected, "failure_pattern reported as normal-recall injected"
+
+
+def test_debug_recall_config_reports_every_excluded_type(
+    tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--json` exposed only `exclude_reference`, hiding the other dimensions."""
+    _install_keyword_stub(monkeypatch)
+    _seed(tmp_cfg)
+
+    env = {**_cli_env(tmp_cfg), "MEMO_NEGATIVE_RECALL_ENABLED": "1"}
+    result = CliRunner().invoke(debug_recall_cmd, [_PROMPT, "--json"], env=env)
+
+    assert result.exit_code == 0, result.output
+    excluded = json.loads(result.output)["config"]["excluded_types"]
+    assert "failure_pattern" in excluded
+    assert "secret" in excluded
