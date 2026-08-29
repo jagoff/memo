@@ -549,10 +549,17 @@ def _check_formula(
     if match and match.group(1) != version:
         _add_doc_drift(destination, path=formula, expected=version, found=match.group(1))
 
-    url_match = re.search(r'^\s*url\s+"(?P<url>[^"]+)"', text, flags=re.MULTILINE)
+    # `[^"]*`, not `[^"]+`: an emptied attribute has nothing between the quotes,
+    # so the old pattern failed to match and skipped every URL check in silence.
+    # A blank `url` is not a docs nit — `brew info` refuses the formula with
+    # `invalid attribute for formula: url ("")` — so it lands in `issues`
+    # regardless of `strict_docs`.
+    url_match = re.search(r'^\s*url\s+"(?P<url>[^"]*)"', text, flags=re.MULTILINE)
     if url_match:
         url = url_match.group("url")
-        if not re.fullmatch(
+        if not url.strip():
+            issues.append(f"{formula.relative_to(repo)} has an empty url")
+        elif not re.fullmatch(
             rf"https://files\.pythonhosted\.org/packages/(?!source/)[^\s]+/"
             rf"mlx_memo-{re.escape(version)}\.tar\.gz",
             url,
@@ -560,6 +567,10 @@ def _check_formula(
             destination.append(
                 f"{formula.relative_to(repo)} should use the exact PyPI source distribution URL"
             )
+
+    sha_match = re.search(r'^\s*sha256\s+"(?P<sha>[^"]*)"', text, flags=re.MULTILINE)
+    if sha_match and not re.fullmatch(r"[0-9a-f]{64}", sha_match.group("sha")):
+        issues.append(f"{formula.relative_to(repo)} sha256 is not a 64-character hex digest")
 
     arch_dependency = text.find("depends_on arch:")
     macos_dependency = text.find("depends_on :macos")

@@ -682,3 +682,40 @@ def test_plan_release_edits_still_stubs_an_empty_unreleased(tmp_path: Path) -> N
     cl = plan_release_edits(repo, "1.2.3", "1.2.4", "2026-06-25")[repo / "CHANGELOG.md"]
 
     assert "- TODO: describe changes" in cl
+
+
+def test_release_check_reports_emptied_homebrew_url_and_sha(tmp_path: Path) -> None:
+    """An emptied `url`/`sha256` is the one breakage the check could not see.
+
+    The URL guard matched `"[^"]+"` — one or more characters — so `url ""`
+    simply failed to match and the whole validation was skipped in silence. A
+    formula with both attributes blanked passed `release check` clean while
+    `brew info` rejected it outright: `invalid attribute for formula: url ("")`.
+    """
+    repo = _fake_repo(tmp_path, "1.2.3")
+    formula = repo / "docs" / "homebrew" / "mlx-memo.rb"
+    formula.parent.mkdir(parents=True)
+    formula.write_text('  url ""\n  sha256 ""\n', encoding="utf-8")
+
+    report = release_check_report(repo)
+
+    assert report.ok is False
+    assert any("url" in issue and "mlx-memo.rb" in issue for issue in report.issues)
+    assert any("sha256" in issue and "mlx-memo.rb" in issue for issue in report.issues)
+
+
+def test_release_check_accepts_a_populated_homebrew_formula(tmp_path: Path) -> None:
+    """The new emptiness guard must not fire on a well-formed formula."""
+    repo = _fake_repo(tmp_path, "1.2.3")
+    formula = repo / "docs" / "homebrew" / "mlx-memo.rb"
+    formula.parent.mkdir(parents=True)
+    formula.write_text(
+        '  url "https://files.pythonhosted.org/packages/ab/cd/ef/mlx_memo-1.2.3.tar.gz"\n'
+        f'  sha256 "{"a" * 64}"\n',
+        encoding="utf-8",
+    )
+
+    report = release_check_report(repo)
+
+    assert not any("url" in issue for issue in report.issues)
+    assert not any("sha256" in issue for issue in report.issues)
