@@ -710,17 +710,35 @@ def plan_release_edits(repo: Path, old: str, new: str, date: str) -> dict[Path, 
         edits[path] = _replace_target_version(path.read_text(encoding="utf-8"), target, new)
 
     changelog = repo / "CHANGELOG.md"
-    section = f"## [{new}] - {date}\n\n### Fixed\n\n- TODO: describe changes\n\n"
-    cl_text = changelog.read_text(encoding="utf-8")
-    cl_new, cl_n = re.subn(
-        r"## \[Unreleased\]\n\n",
-        lambda _m: f"## [Unreleased]\n\n{section}",
-        cl_text,
-    )
-    if cl_n != 1:
-        raise ValueError(f"expected 1 Unreleased section, got {cl_n}")
-    edits[changelog] = cl_new
+    edits[changelog] = _open_changelog_section(changelog.read_text(encoding="utf-8"), new, date)
     return edits
+
+
+def _open_changelog_section(text: str, new: str, date: str) -> str:
+    """Open a `## [new] - date` section, carrying accumulated entries into it.
+
+    Keep a Changelog accumulates under `[Unreleased]` and renames that section
+    on release, so anything already written there *is* the release notes: it
+    moves under the new heading and `[Unreleased]` is left empty for the next
+    cycle. Stubbing `- TODO: describe changes` above those entries instead
+    produced two `### Fixed` blocks under one version plus a TODO that
+    `release check` rejects, so every release had to hand-delete it.
+
+    The stub is still correct when nothing was accumulated — there it is the
+    prompt to write notes before committing.
+    """
+    marker = "## [Unreleased]\n\n"
+    count = text.count(marker)
+    if count != 1:
+        raise ValueError(f"expected 1 Unreleased section, got {count}")
+
+    start = text.index(marker) + len(marker)
+    following = re.search(r"^## \[", text[start:], re.M)
+    end = start + following.start() if following else len(text)
+
+    accumulated = text[start:end].strip()
+    body = accumulated if accumulated else "### Fixed\n\n- TODO: describe changes"
+    return f"{text[:start]}## [{new}] - {date}\n\n{body}\n\n{text[end:]}"
 
 
 def plan_release_sync_edits(repo: Path, version: str) -> dict[Path, str]:

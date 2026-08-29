@@ -643,3 +643,42 @@ def test_release_check_reports_blocking_homebrew_mcp_test(tmp_path: Path) -> Non
     assert any("blocks waiting for input" in warning for warning in report.warnings)
     assert strict.ok is False
     assert any("blocks waiting for input" in issue for issue in strict.issues)
+
+
+def test_plan_release_edits_promotes_accumulated_unreleased_entries(tmp_path: Path) -> None:
+    """Entries already written under `[Unreleased]` are the release notes.
+
+    Keep a Changelog accumulates under `[Unreleased]` and renames that section
+    on release. Inserting a `- TODO: describe changes` stub above real entries
+    produces two `### Fixed` blocks under one version and a TODO that
+    `release check` then rejects — every release has to hand-delete it.
+    """
+    repo = _fake_repo(tmp_path, "1.2.3")
+    (repo / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "## [Unreleased]\n\n"
+        "### Fixed\n\n"
+        "- a real thing that got fixed\n\n"
+        "## [1.2.3] - 2026-01-01\n\n- prior\n",
+        encoding="utf-8",
+    )
+
+    cl = plan_release_edits(repo, "1.2.3", "1.2.4", "2026-06-25")[repo / "CHANGELOG.md"]
+
+    assert "TODO: describe changes" not in cl
+    assert cl.count("### Fixed") == 1
+    body = cl[cl.index("## [1.2.4]") : cl.index("## [1.2.3]")]
+    assert "- a real thing that got fixed" in body
+    # `[Unreleased]` survives, emptied, ready for the next cycle.
+    assert cl.index("## [Unreleased]") < cl.index("## [1.2.4]")
+    assert "- a real thing" not in cl[cl.index("## [Unreleased]") : cl.index("## [1.2.4]")]
+
+
+def test_plan_release_edits_still_stubs_an_empty_unreleased(tmp_path: Path) -> None:
+    """With nothing accumulated there is nothing to promote, so the TODO stub
+    stays — it is the prompt to write the notes before committing."""
+    repo = _fake_repo(tmp_path, "1.2.3")
+
+    cl = plan_release_edits(repo, "1.2.3", "1.2.4", "2026-06-25")[repo / "CHANGELOG.md"]
+
+    assert "- TODO: describe changes" in cl
