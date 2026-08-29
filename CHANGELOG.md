@@ -9,6 +9,23 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.14.7] - 2026-08-28
+
+### Fixed
+
+- **`memo release bump` overwrote the release notes with a placeholder.** It
+  always inserted a fresh `### Fixed` block holding a single placeholder bullet
+  under the new version heading, even when `[Unreleased]` already held the
+  entries for that release. The result was two `### Fixed` blocks under one
+  version plus placeholder text that `release check` rejects, so every release
+  had to hand-delete four lines before committing. Keep a Changelog accumulates
+  under `[Unreleased]` and renames that section on release, so accumulated
+  entries now move under the new heading and `[Unreleased]` is left empty for
+  the next cycle. The placeholder is still emitted when nothing was
+  accumulated, where it is the prompt to write notes. The fixture behind every
+  `plan_release_edits` test had an empty `[Unreleased]`, so the populated path
+  — the one real releases take — had no coverage; both paths are covered now.
+
 ## [4.14.6] - 2026-08-28
 
 ### Fixed
