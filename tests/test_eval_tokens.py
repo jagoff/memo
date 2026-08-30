@@ -230,3 +230,29 @@ def test_crushed_rows_survived_counts_only_rows_still_present():
     assert _count_rows_survived(rows, "not json at all") == 0
     assert _count_rows_survived(rows, json.dumps({"not": "a list"})) == 0
     assert _count_rows_survived(rows, None) == 0
+
+
+def test_gate_metrics_records_the_sample_each_lever_was_measured_on():
+    """`saved_frac` without its sample size cannot be read as evidence.
+
+    The baseline is the only thing `memo token-savings` sees, so a number
+    whose basis is dropped here is unrecoverable downstream.
+    """
+    from memo import eval_tokens
+
+    rows = [
+        eval_tokens.aggregate_capture(
+            "crusher_L1",
+            [
+                eval_tokens.P2Sample(
+                    tokens_off=100,
+                    tokens_on=50,
+                    survived=True,
+                    rows_survived=10,
+                    rows_total=10,
+                )
+            ],
+        )
+    ]
+    metrics = eval_tokens.gate_metrics(rows)
+    assert metrics["crusher_L1"]["n_samples"] == 1

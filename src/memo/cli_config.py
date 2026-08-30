@@ -44,21 +44,60 @@ def config_group(ctx: click.Context) -> None:
     raise click.exceptions.Exit(run_config_tui())
 
 
+def _overlay_values() -> dict[str, str]:
+    """Registered flags pinned by the auto-tuner's overlay, if any."""
+    import os
+
+    from memo.tuned_overlay import overlay_values
+
+    return {n: v for n, v in overlay_values(os.environ).items() if n in flags.REGISTRY}
+
+
+def _flag_source(
+    name: str,
+    env_vals: dict[str, str],
+    config_vals: dict[str, str],
+    overlay_vals: dict[str, str],
+) -> str:
+    """Which layer decides this flag, in `flags.flag()`'s resolution order.
+
+    `env var > Markdown config > tuned overlay > built-in default`. Reporting
+    only the first layer — which is what an env-only `active` column does —
+    renders every `memo config set` value blank, and a blank cell beside a
+    default of `0` reads as "off". Markdown config is the channel that reaches
+    daemons, hooks, and the MCP server; the env layer is per-terminal.
+    """
+    if name in env_vals:
+        return "env"
+    if name in config_vals:
+        return "config"
+    if name in overlay_vals:
+        return "overlay"
+    return "default"
+
+
 @config_group.command(name="flags")
 @click.option("--group", "group_filter", default=None, help="Filter by subsystem group.")
-@click.option("--active", is_flag=True, help="Only flags currently set in the environment.")
+@click.option(
+    "--active",
+    is_flag=True,
+    help="Only flags explicitly configured (env, Markdown config, or tuned overlay).",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
 def config_flags(group_filter: str | None, active: bool, as_json: bool) -> None:
-    """List documented MEMO_* flags (type, default, group, active value).
+    """List documented MEMO_* flags (type, default, group, effective value).
 
     Example: memo config flags --group recall
     """
-    active_vals = flags.active_flags()
+    env_vals = flags.active_flags()
+    config_vals = flags.active_config_values()
+    overlay_vals = _overlay_values()
     rows = []
     for name, spec in flags.REGISTRY.items():
         if group_filter and spec.group != group_filter:
             continue
-        if active and name not in active_vals:
+        source = _flag_source(name, env_vals, config_vals, overlay_vals)
+        if active and source == "default":
             continue
         rows.append(
             {
@@ -66,7 +105,11 @@ def config_flags(group_filter: str | None, active: bool, as_json: bool) -> None:
                 "group": spec.group,
                 "kind": spec.kind,
                 "default": spec.default,
-                "active": active_vals.get(name),
+                # `active` stays env-only for anyone reading the raw shell
+                # state; `effective`/`source` are what the flag actually does.
+                "active": env_vals.get(name),
+                "effective": flags.flag(name),
+                "source": source,
                 "help": spec.help,
             }
         )
@@ -80,17 +123,22 @@ def config_flags(group_filter: str | None, active: bool, as_json: bool) -> None:
     table.add_column("group", style="magenta")
     table.add_column("kind")
     table.add_column("default", style="dim")
-    table.add_column("active", style="green")
+    table.add_column("effective", style="green")
+    table.add_column("source", style="yellow")
     for r in rows:
         table.add_row(
             r["flag"],
             r["group"],
             r["kind"],
             "" if r["default"] is None else str(r["default"]),
-            "" if r["active"] is None else str(r["active"]),
+            "" if r["effective"] is None else str(r["effective"]),
+            "" if r["source"] == "default" else r["source"],
         )
     console.print(table)
-    console.print(f"[dim]{len(rows)} flag(s); {len(active_vals)} active in env[/dim]")
+    console.print(
+        f"[dim]{len(rows)} flag(s); {len(env_vals)} from env, "
+        f"{len(config_vals)} from Markdown config, {len(overlay_vals)} from tuned overlay[/dim]"
+    )
 
 
 @config_group.command(name="flags-audit")
