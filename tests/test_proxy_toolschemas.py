@@ -540,3 +540,48 @@ def test_builtin_discovery_does_not_shell_out() -> None:
 
     assert not hasattr(ts, "_discover_builtins")
     assert "StructuredOutput" in ts._BUILTIN_NEVER_PRUNE
+
+
+# ── Wire names are MCP-prefixed; bare names never reach the proxy ────────────
+# Every test above names its tools `memo_search` / `memo_rename`. A real
+# payload never does: Claude Code puts memo's tools on the wire as
+# `mcp__memo__memo_search`. So the fixtures could not produce the production
+# condition, and the two guards that key off a bare name — `_ALWAYS_KEEP` and
+# the `scope="memo"` ownership test — passed here while matching nothing live.
+
+
+def test_always_keep_survives_under_the_real_mcp_wire_name(tmp_path, monkeypatch):
+    """`memo_save` is in `_ALWAYS_KEEP` ("kept regardless of usage or scope"),
+    but the wire spells it `mcp__memo__memo_save`. With no recorded usage the
+    exact-match lookup misses and the write path is pruned off the model's
+    surface — the same defect class as pruning a forced-call schema."""
+    monkeypatch.delenv("MEMO_PROXY_TOOL_SCHEMAS_SCOPE", raising=False)
+    monkeypatch.setattr(
+        "memo.proxy.transforms.toolschemas.recent_tool_names",
+        lambda state_dir, window: set(),
+    )
+    zones = make_zones(["mcp__memo__memo_save", "mcp__memo__memo_search", "mcp__memo__memo_rename"])
+    ToolSchemas().apply(zones, _ctx(tmp_path))
+    names = {t["name"] for t in zones.tools}
+    assert "mcp__memo__memo_save" in names
+    assert "mcp__memo__memo_search" in names
+    # Not in _ALWAYS_KEEP and unused: pruning it is the whole point.
+    assert "mcp__memo__memo_rename" not in names
+
+
+def test_scope_memo_prunes_an_unused_memo_tool_under_its_wire_name(tmp_path, monkeypatch):
+    """The conservative rollback scope must still prune memo's OWN unused
+    tools. Keyed on `startswith("memo_")`, no wire name is ever recognized as
+    owned, so every tool takes the passthrough branch and the transform saves
+    nothing at all — a rollback that silently disables itself."""
+    monkeypatch.setenv("MEMO_PROXY_TOOL_SCHEMAS_SCOPE", "memo")
+    monkeypatch.setattr(
+        "memo.proxy.transforms.toolschemas.recent_tool_names",
+        lambda state_dir, window: set(),
+    )
+    zones = make_zones(["Read", "mcp__octocode__localSearchCode", "mcp__memo__memo_rename"])
+    saved = ToolSchemas().apply(zones, _ctx(tmp_path))
+    names = {t["name"] for t in zones.tools}
+    assert {"Read", "mcp__octocode__localSearchCode"} <= names
+    assert "mcp__memo__memo_rename" not in names
+    assert saved > 0
