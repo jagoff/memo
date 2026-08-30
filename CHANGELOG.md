@@ -9,6 +9,38 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.14.8] - 2026-08-30
+
+### Fixed
+
+- **Tool names were compared in a form the wire never produces.** An MCP client
+  namespaces every tool it proxies, so memo's tools reach the proxy as
+  `mcp__memo__memo_search`, never as the bare `memo_search` the pruner's guards
+  were written in. `_ALWAYS_KEEP` — documented "kept regardless of usage or
+  scope" — therefore matched nothing, and on a session with no recorded usage
+  the whole memo surface was pruned, `memo_save` included: memo's write
+  contract silently left the model's toolset. `MEMO_PROXY_TOOL_SCHEMAS_SCOPE=memo`,
+  the documented one-flag-away rollback, recognised no tool as owned, kept every
+  schema and saved zero — a fallback that quietly disabled itself. Both
+  comparisons now normalize the wire name first.
+- **The codegraph index was resolved from a path that never holds one.**
+  `CODEGRAPH_DB` is derived from `__file__`, so under the isolated `uv tool`
+  install memo ships in it points inside site-packages. `CodeReferenceResolver`
+  and `memo_graph`'s code-evidence payload read that constant directly, skipping
+  cwd discovery and the `MEMO_CODEGRAPH_DB` override, so every memory resolved to
+  zero code references and `memo graph stats` reported `0 code nodes` beside a
+  present, configured, readable index. Both now go through `_resolve_db()`, as
+  `code_intel`, `recall_logic`, `cli_code_facts`, `cli_doctor` and
+  `cli_dream_passes` already did. On the reporting machine this recovers 8,102
+  code references over 954 memories.
+- **The proxy A/B withheld the small bad number and shipped the large one.**
+  Arms are assigned per session, so the request-count floor guarding the
+  treated-vs-holdout ratio bounds how much evidence each draw carries but not
+  how many draws there are: one holdout session of 400 requests clears the floor
+  while still being a single correlated cluster. The panel now also requires
+  three distinct sessions per arm, using the session counts it already computed
+  and already displayed.
+
 ## [4.14.7] - 2026-08-28
 
 ### Fixed
