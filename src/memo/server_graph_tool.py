@@ -40,9 +40,14 @@ def _with_code_evidence(
     from memo.code_evidence import codegraph_evidence
     from memo.code_traceability import codegraph_repo_id
 
-    repo_root = codegraph_loader.CODEGRAPH_DB.parent.parent
+    # `_resolve_db`, not the bare constant — the constant is derived from
+    # `__file__` and points inside site-packages under an isolated `uv tool`
+    # install, so the tool reports "missing" on a machine whose index is
+    # configured and readable. See the same fix in `code_traceability`.
+    db_path = codegraph_loader._resolve_db()
+    repo_root = db_path.parent.parent
     payload["code_evidence"] = codegraph_evidence(
-        db_path=codegraph_loader.CODEGRAPH_DB,
+        db_path=db_path,
         repo_root=repo_root,
         repo_id=codegraph_repo_id(repo_root),
     ).to_dict()
