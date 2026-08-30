@@ -10,7 +10,7 @@ OLD_APP_NAME="memo-mcp"
 # fastmcp, so fastapi is the single missing piece -- enough to make the launchd
 # agent crashloop while the installer reports success.
 PYPI_SPEC="mlx-memo[http]"
-DEFAULT_VERSION="4.14.7"
+DEFAULT_VERSION="4.14.8"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=13
 
