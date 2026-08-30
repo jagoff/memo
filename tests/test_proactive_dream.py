@@ -21,6 +21,12 @@ class _FakeMem:
     def superseded_pairs(self):
         return [("old1", "new1", "use X")]
 
+    def get(self, mid):
+        # Stands in for `Memory.get`: the reliability detector drops a pair
+        # whose successor no longer resolves, so the fake must answer for
+        # `new1` or this stops standing in for a store that has it.
+        return object() if mid == "new1" else None
+
     def open_loops(self, limit):
         return [("m9", "finish study")]
 

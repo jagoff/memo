@@ -16,12 +16,21 @@ _log = logging.getLogger(__name__)
 
 
 def detect_reliability(mem: Any, *, now: str, limit: int = 20) -> list[Nudge]:
+    out: list[Nudge] = []
     try:
         pairs = mem.superseded_pairs()[:limit]
+        # A nudge whose action cannot resolve is worse than no nudge. Pointing
+        # at the successor is only an improvement while the successor exists,
+        # and `superseded_pairs` reads the archive from disk without checking:
+        # measured 2026-08-30, only one of the first three successors the
+        # refreshed digest offered still resolved — the other two had been
+        # retired since they won. The lookup sits inside the guard because the
+        # module contract is that this detector never sinks a surface, and a
+        # `mem` that cannot answer `get` would otherwise raise past it.
+        pairs = [p for p in pairs if mem.get(p[1]) is not None]
     except Exception as exc:  # guarded — never sink a surface
         _log.debug("proactive.reliability failed: %s", exc)
         return []
-    out: list[Nudge] = []
     for stale_id, superseding_id, title in pairs:
         out.append(
             Nudge.make(
