@@ -14,7 +14,12 @@ def test_reliability_nudges_cite_superseding_id():
     n = ns[0]
     assert n.kind == KIND_RELIABILITY
     assert "new1" in n.evidence and n.urgency >= 0.7
-    assert n.action == "memo get old1"
+    # The SUCCESSOR, not the stale side. `superseded_pairs` sources the stale
+    # id from `memory_dir/inactive/`, and `memo get` does not read the archive:
+    # on 2026-08-30 all seven ids the live digest offered as `memo get <id>`
+    # answered "not found". This assertion used to pin `old1`, so the suite
+    # certified the dead-end.
+    assert n.action == "memo get new1"
 
 
 def test_reliability_guarded_returns_empty_on_error():

@@ -31,7 +31,11 @@ def detect_reliability(mem: Any, *, now: str, limit: int = 20) -> list[Nudge]:
                 value=0.8,
                 title=f"You may be relying on a superseded fact: {title}",
                 evidence=(superseding_id, stale_id),
-                action=f"memo get {stale_id}",
+                # The SUCCESSOR, not the stale side: `superseded_pairs` sources
+                # the stale id from `memory_dir/inactive/`, which `memo get`
+                # does not read — every action this emitted answered "not
+                # found". The replacement is the memory worth reading anyway.
+                action=f"memo get {superseding_id}",
                 created_at=now,
             )
         )
