@@ -38,6 +38,21 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   stays available as `active` in `--json`.
 - **Dead statement in `aggregate_capture`.** `len(samples) or 1` was evaluated
   and discarded; the count it was computing is now the recorded `n_samples`.
+- **The reliability nudge showed the same seven memories forever, and its
+  action did not work.** `superseded_pairs()` ordered `inactive/*.md` with
+  `sorted(glob(...))` — by FILENAME, which for these files is the hex memory
+  id, so a store with 767 archived memories surfaced the alphabetically-first
+  seven at every session start indefinitely, all resolved weeks earlier. The
+  scan now orders most-recently-superseded first and drops supersessions older
+  than 30 days, because the caller is an interrupt surface and a supersession
+  is only worth interrupting for while it is news. Entries with no
+  `superseded_at` sort last but are kept, so archives written before the stamp
+  existed are not hidden. The nudge's action pointed at the stale id, which
+  lives in `inactive/` and which `memo get` does not read — every one of those
+  seven answered `not found`; it now points at the successor, which exists and
+  is the memory worth reading. Neither fixture stamped `superseded_at`, and the
+  ordering fixture used ids whose filename order already matched the expected
+  order, so the sort could not be observed as wrong.
 
 ## [4.14.8] - 2026-08-30
 

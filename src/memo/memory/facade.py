@@ -85,6 +85,12 @@ def _dead_memory_from(durable_types: frozenset[str]) -> str:
     )
 
 
+# How long a supersession stays worth interrupting a session about. The
+# reliability nudge is a session-start surface, and `inactive/` only grows —
+# without a window the oldest entries would nudge forever.
+_SUPERSEDED_NEWS_DAYS = 30
+
+
 class Memory(
     _WriteOpsMixin,
     _UpdateOpsMixin,
@@ -525,23 +531,35 @@ class Memory(
         return [(r.get("id") or "", r.get("title") or "—") for r in rows]
 
     def superseded_pairs(self, *, limit: int = 50) -> list[tuple[str, str, str]]:
-        """Archived memories with a live successor, as `(stale_id, superseding_id, title)`.
+        """Recently superseded memories, as `(stale_id, superseding_id, title)`.
 
         Scans `cfg.memory_dir / "inactive" / *.md` for files stamped by
         `lifecycle.py`'s `archive_memory(superseded_by=...)` — the WINNING
         memory id lives in frontmatter `extra.superseded_by`. Dream-only (a
         disk scan is fine there; never called from the recall path). Guarded
         per-file: a malformed archive entry is skipped, not fatal.
+
+        Ordered most-recently-superseded first and capped at
+        `_SUPERSEDED_NEWS_DAYS`, because the caller is a nudge surface and a
+        supersession is only worth interrupting for while it is news. The
+        previous `sorted(glob("*.md"))` ordered by FILENAME, which for these
+        files is the hex memory id — neither recency nor relevance. On a store
+        with 767 archived memories that pinned the same seven nudges to every
+        session indefinitely, all of them resolved weeks earlier. An entry with
+        no `superseded_at` sorts last but is kept: an unstamped archive is old,
+        not necessarily stale news, and dropping it would hide real pairs
+        written before the stamp existed.
         """
+        from datetime import UTC, datetime, timedelta
+
         inactive_dir = self.cfg.memory_dir / "inactive"
         if not inactive_dir.is_dir():
             return []
         import frontmatter
 
-        out: list[tuple[str, str, str]] = []
-        for path in sorted(inactive_dir.glob("*.md")):
-            if len(out) >= limit:
-                break
+        cutoff = datetime.now(tz=UTC) - timedelta(days=_SUPERSEDED_NEWS_DAYS)
+        scored: list[tuple[str, tuple[str, str, str]]] = []
+        for path in inactive_dir.glob("*.md"):
             try:
                 post = frontmatter.loads(path.read_text(encoding="utf-8"))
                 extra = post.get("extra")
@@ -551,14 +569,28 @@ class Memory(
                 stale_id = str(post.get("id") or "")
                 if not stale_id:
                     continue
+                at_raw = str(extra.get("superseded_at") or "") if isinstance(extra, dict) else ""
+                at = None
+                with contextlib.suppress(ValueError):
+                    at = datetime.fromisoformat(at_raw) if at_raw else None
+                if at is not None:
+                    # A naive stamp is read as UTC — the writer
+                    # (`lifecycle.archive_memory`) is UTC-aware, so this only
+                    # affects hand-edited archives.
+                    if at.tzinfo is None:
+                        at = at.replace(tzinfo=UTC)
+                    if at < cutoff:
+                        continue
                 title = str(post.get("title") or "—")
-                out.append((stale_id, str(superseded_by), title))
+                scored.append((at_raw, (stale_id, str(superseded_by), title)))
             except Exception:  # noqa: S112 — a malformed archive entry (bad YAML
                 # frontmatter, unreadable file, etc.) must not sink reliability
                 # nudges for every OTHER valid pair (I3 review fix: frontmatter.loads
                 # can raise yaml.YAMLError, which (OSError, ValueError) missed).
                 continue
-        return out
+        # Empty stamps sort last: "" is below every ISO timestamp descending.
+        scored.sort(key=lambda kv: kv[0], reverse=True)
+        return [pair for _at, pair in scored[:limit]]
 
     def low_confidence_ids(self, *, threshold: float = 0.4, limit: int = 50) -> list[str]:
         """Memory ids whose `memory_health.confidence` is below `threshold`.
