@@ -9,6 +9,10 @@ pytestmark = pytest.mark.resource_hygiene
 
 
 class _FullFakeMem:
+    def get(self, mid):
+        # Stands in for `Memory.get`: every successor these fakes name is live.
+        return object()
+
     """Fake mem exposing all five v1+v2 proactive accessors."""
 
     def superseded_pairs(self):
@@ -71,6 +75,7 @@ def test_refresh_candidates_dedups_colliding_nudge_ids(tmp_path: Path):
     """
 
     class _CollidingMem(_FullFakeMem):
+        # `get` is inherited from _FullFakeMem.
         def recurring_pattern_pairs(self, *, limit):
             return [("m1", "same memory, first phrasing"), ("m1", "same memory, again")]
 

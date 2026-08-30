@@ -9,6 +9,19 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Fixed
+
+- **A reliability nudge whose successor was also retired still pointed at it.**
+  4.14.9 moved the nudge's action from the archived stale id to the superseding
+  one, which is an improvement only while the successor exists —
+  `superseded_pairs` reads the archive off disk and never checks. Measured
+  against the live store right after that change: of the first three actions
+  the refreshed digest offered, only one resolved. The detector now drops a
+  pair whose successor no longer resolves, so every nudge it emits is
+  actionable by construction. The check sits inside the detector's existing
+  guard, because the module contract is that it never sinks a proactive
+  surface.
+
 ## [4.14.9] - 2026-08-30
 
 ### Fixed

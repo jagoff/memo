@@ -3,9 +3,15 @@ from memo.proactive.nudge import KIND_RELIABILITY
 
 
 class _FakeMem:
+    def __init__(self, live=("new1",)):
+        self._live = set(live)
+
     def superseded_pairs(self):
         # (stale_id, superseding_id, title)
         return [("old1", "new1", "use X not Y")]
+
+    def get(self, mid):
+        return object() if mid in self._live else None
 
 
 def test_reliability_nudges_cite_superseding_id():
@@ -28,3 +34,16 @@ def test_reliability_guarded_returns_empty_on_error():
             raise RuntimeError("boom")
 
     assert detect_reliability(Boom(), now="2026-07-21T00:00:00Z") == []
+
+
+def test_reliability_skips_a_pair_whose_successor_is_also_gone():
+    """A nudge whose action cannot resolve is worse than no nudge.
+
+    Pointing at the successor (rather than the archived stale side) is only an
+    improvement while the successor exists. Live check on 2026-08-30, after
+    that change: of the first three actions the refreshed digest offered, only
+    one resolved — the other two successors had themselves been retired since.
+    """
+    nudges = detect_reliability(_FakeMem(live=()), now="2026-07-21T00:00:00Z")
+
+    assert nudges == []
