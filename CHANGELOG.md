@@ -9,6 +9,8 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.14.10] - 2026-08-30
+
 ### Fixed
 
 - **A reliability nudge whose successor was also retired still pointed at it.**

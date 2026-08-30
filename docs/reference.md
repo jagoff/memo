@@ -57,7 +57,7 @@ sqlite state, and CLI should move together as one subsystem.
 ```bash
 # One-line installer (uv/pipx under the hood, pins the matching release,
 # and configures Claude Code + Codex + OpenCode + Devin Desktop when available)
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.9/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.10/install.sh | bash
 # or install the latest published PyPI release explicitly
 pipx install mlx-memo
 # or
@@ -89,22 +89,22 @@ memo --version
 
 ```bash
 # Install the latest published PyPI release instead of GitHub master.
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.9/install.sh | MEMO_INSTALL_FROM_PYPI=1 bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.10/install.sh | MEMO_INSTALL_FROM_PYPI=1 bash
 
 # Pin a published PyPI version.
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.9/install.sh | MEMO_VERSION=0.6.0 bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.10/install.sh | MEMO_VERSION=0.6.0 bash
 
 # Install from an explicit pipx spec (local checkout, git ref, wheel, etc.).
 MEMO_INSTALL_SPEC=/path/to/memo ./install.sh
 
 # Skip agent-client configuration during install.
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.9/install.sh | MEMO_INSTALL_SKIP_AGENT_CONFIG=1 bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.10/install.sh | MEMO_INSTALL_SKIP_AGENT_CONFIG=1 bash
 
 # Force-skip the MLX model download (models load lazily on first use).
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.9/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=no bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.10/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=no bash
 
 # Force-yes the MLX model download (skip the interactive confirmation).
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.9/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=yes bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.10/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=yes bash
 ```
 
 **Model download** is part of memo's structure (embedder + reranker + chat
@@ -145,7 +145,7 @@ the corpus. On **Linux / Ubuntu**, use the CPU-index install command in
 [ubuntu.md](ubuntu.md).
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.9/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.10/install.sh | bash
 memo doctor --strict-runtime
 memo install-slash --client claude-code --client codex --client opencode --client devin-desktop
 ```
