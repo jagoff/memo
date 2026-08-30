@@ -9,6 +9,8 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.14.9] - 2026-08-30
+
 ### Fixed
 
 - **`memo token-savings` published a percentage its own gate rejected.** It
