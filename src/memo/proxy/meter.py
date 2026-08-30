@@ -247,6 +247,16 @@ def _by_transform(treated: list[dict]) -> dict[str, dict]:
     return by_transform
 
 
+# Requests a session must carry before it counts as an independent draw. A
+# session with exactly one request cannot exhibit any within-session variation,
+# which is precisely what the session count exists to detect — so it inflates
+# the count without adding evidence. Live ledger, 2026-08-30: the holdout arm
+# read as 2 sessions on 37 real requests from ONE session plus a single stray
+# row; one more stray would have cleared the three-session floor and published
+# a ratio that is still one session of evidence.
+_MIN_SESSION_REQUESTS = 2
+
+
 def _distinct_sessions(rows: list[dict]) -> int:
     """How many DISTINCT sessions an arm represents. Since holdout assignment
     is per-session (`server.py` calls `meter.is_holdout(session_key, ...)`),
@@ -254,8 +264,14 @@ def _distinct_sessions(rows: list[dict]) -> int:
     (a request count) overstates the effective, independent sample size. Rows
     with no `session_key` (hand-built test Records, or a row written before
     this field existed) are excluded rather than folded into a fake shared
-    session."""
-    return len({r.get("session_key") for r in rows if r.get("session_key")})
+    session, and a session under `_MIN_SESSION_REQUESTS` is not counted at
+    all — see that constant for why a singleton is an artifact, not a draw."""
+    counts: dict[str, int] = {}
+    for r in rows:
+        key = r.get("session_key")
+        if key:
+            counts[str(key)] = counts.get(str(key), 0) + 1
+    return sum(1 for n in counts.values() if n >= _MIN_SESSION_REQUESTS)
 
 
 def summarize(state_dir: Path) -> dict:
