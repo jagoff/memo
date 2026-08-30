@@ -127,6 +127,30 @@ _ALWAYS_KEEP = frozenset({DOCS_TOOL_NAME, "memo_search", "memo_save"}) | _BUILTI
 _DEFAULT_WINDOW = 20
 _DEFAULT_SCOPE = "all"
 
+# An MCP client namespaces every tool it proxies, so memo's tools reach the
+# wire as `mcp__memo__memo_search`, never as the bare `memo_search` the two
+# guards above are written in. Both comparisons therefore normalize first:
+# without this, `_ALWAYS_KEEP` matches nothing (memo's write path gets pruned
+# off the model's surface on a session that has not called it yet) and the
+# `scope="memo"` rollback recognizes no tool as owned, so it keeps every
+# schema and saves zero — a fallback that silently disables itself.
+_MCP_SERVER_SEGMENT = "__memo__"
+
+
+def _bare_name(tool_name: str) -> str:
+    """The tool's own name, with any `mcp__<server>__` namespace removed."""
+    _, sep, bare = tool_name.rpartition("__")
+    return bare if sep else tool_name
+
+
+def _is_owned(tool_name: str) -> bool:
+    """Whether memo owns this tool, in wire or bare form.
+
+    The server segment is checked as well as the name prefix because memo also
+    exposes `mem_*` tools, which the prefix alone would disown.
+    """
+    return _MCP_SERVER_SEGMENT in tool_name or _bare_name(tool_name).startswith(_OWNED_PREFIX)
+
 
 def _scope() -> str:
     """`MEMO_PROXY_TOOL_SCHEMAS_SCOPE`, defaulting (and falling back on any
@@ -281,7 +305,7 @@ def _frozen_keep_set(ctx: Context, window: int, scope: str) -> tuple[str, frozen
     else:
         names = recent_tool_names(ctx.state_dir, window)
         if scope == "memo":
-            names = {n for n in names if n.startswith(_OWNED_PREFIX)}
+            names = {n for n in names if _is_owned(n)}
         result = (scope, frozenset(names) | _ALWAYS_KEEP)
         _persist(ctx.state_dir, ctx.session_key, result)
 
@@ -369,11 +393,11 @@ class ToolSchemas:
                 tool_name = tool.get("name")
                 if not isinstance(tool_name, str) or not tool_name:
                     return True
-                if frozen_scope == "memo" and not tool_name.startswith(_OWNED_PREFIX):
+                if frozen_scope == "memo" and not _is_owned(tool_name):
                     # Conservative scope: memo never touches a schema it
                     # doesn't own.
                     return True
-                return tool_name in keep
+                return tool_name in keep or _bare_name(tool_name) in keep
 
             # List-comprehension over the ORIGINAL order — never a set, never
             # sorted by anything derived from `keep` — so the surviving tools

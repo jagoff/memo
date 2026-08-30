@@ -235,7 +235,14 @@ class CodeReferenceResolver:
         if db_path is None or repo_root is None:
             from memo import codegraph_loader
 
-            db_path = db_path or codegraph_loader.CODEGRAPH_DB
+            # `_resolve_db`, not the bare `CODEGRAPH_DB` constant: the constant
+            # is derived from `__file__`, so under an isolated `uv tool` install
+            # it points inside site-packages, where no index ever lives. Going
+            # through the resolver picks up cwd discovery and the
+            # `MEMO_CODEGRAPH_DB` override, same as every other caller
+            # (`code_intel`, `recall_logic`, `cli_code_facts`, `cli_doctor`,
+            # `cli_dream_passes`).
+            db_path = db_path or codegraph_loader._resolve_db()
             repo_root = repo_root or db_path.parent.parent
         assert db_path is not None
         assert repo_root is not None

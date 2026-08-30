@@ -14,6 +14,12 @@ def _isolate_codegraph(monkeypatch, tmp_path):
     """Keep the merged graph hermetic — never read the machine's real codegraph."""
     from memo import codegraph_loader
 
+    # Pinning the constant is no longer enough: resolution honours cwd
+    # discovery and MEMO_CODEGRAPH_DB first, and the test runner's cwd is a
+    # repo that HAS an index. Both are turned off here so a hermetic test can
+    # never reach the machine's real codegraph.
+    monkeypatch.setenv("MEMO_CODEGRAPH_DISCOVERY", "0")
+    monkeypatch.setenv("MEMO_CODEGRAPH_DB", str(tmp_path / "no-codegraph.db"))
     monkeypatch.setattr(codegraph_loader, "CODEGRAPH_DB", tmp_path / "no-codegraph.db")
     codegraph_loader.reset()
     yield
@@ -284,3 +290,45 @@ def test_communities_verb_bounds_both_dimensions() -> None:
     assert first["entities_truncated"] is True
     assert len(first["entities"]) == first["entities_shown"] <= 25
     assert first["size"] == 60  # the TRUE size, not the shown count
+
+
+def test_memo_graph_code_evidence_honours_the_configured_codegraph_db(
+    mock_memory, tmp_path, monkeypatch
+):
+    """`memo_graph` must resolve its index the same way every other caller
+    does — through `codegraph_loader._resolve_db()`.
+
+    Reading the `CODEGRAPH_DB` constant skips cwd discovery and the
+    `MEMO_CODEGRAPH_DB` override, and the constant is derived from `__file__`,
+    so under an isolated `uv tool` install it points inside site-packages. The
+    tool then reports `recording_status="missing"` on a machine whose index is
+    configured, present and readable.
+    """
+    import sqlite3
+
+    configured = tmp_path / "configured" / ".codegraph" / "codegraph.db"
+    configured.parent.mkdir(parents=True)
+    conn = sqlite3.connect(configured)
+    conn.executescript(
+        """
+        CREATE TABLE nodes (
+            id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL,
+            qualified_name TEXT NOT NULL, file_path TEXT NOT NULL,
+            language TEXT NOT NULL, start_line INTEGER NOT NULL,
+            end_line INTEGER NOT NULL
+        );
+        INSERT INTO nodes VALUES
+          ('file:src/memo/graph.py', 'file', 'graph.py', 'src/memo/graph.py',
+           'src/memo/graph.py', 'python', 1, 900);
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setenv("MEMO_CODEGRAPH_DISCOVERY", "0")
+    monkeypatch.setenv("MEMO_CODEGRAPH_DB", str(configured))
+
+    _seed_chain(mock_memory)
+    out = _call(mock_memory, verb="path", a="alpha", b="gamma", include_code=True)
+
+    assert out["code_evidence"]["recording_status"] != "missing"
