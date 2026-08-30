@@ -43,6 +43,11 @@ _MIN_COHORT_TURNS = 30
 # swing a ratio wildly (n=1 vs n=1 can print a two-digit swing in bold colour
 # with nothing marking it as unproven).
 _MIN_PROXY_SAMPLE = 30
+# Distinct sessions required per arm. Arms are assigned per session, so this is
+# the count of independent draws; the request floor above only bounds how much
+# evidence each draw carries. Three is the smallest number that cannot be one
+# atypical session plus noise.
+_MIN_PROXY_SESSIONS = 3
 
 
 def _fmt_tokens(tokens: float) -> str:
@@ -161,13 +166,19 @@ def _proxy_panel(proxy: dict) -> Panel:
     # traffic once put 2 holdout requests worth 5 tok-equiv against 4984
     # treated worth 19320 and rendered "386295.8% cost" in bold. Withhold the
     # ratio below the floor instead of shipping it with a "provisional" word.
-    thin = min(n_t, n_h) < _MIN_PROXY_SAMPLE
+    # …and the request floor alone cannot catch that shape: one holdout session
+    # of 400 requests clears `n_h >= 30` while still being a single draw. The
+    # session counts computed just above are what the arms are actually drawn
+    # in, so they gate too — otherwise the floor withholds the small version of
+    # the bad number and ships the large one.
+    thin = min(n_t, n_h) < _MIN_PROXY_SAMPLE or min(n_ts, n_hs) < _MIN_PROXY_SESSIONS
     if frac is None or thin:
         if n_t or n_h:
             body = (
                 f"[dim]not enough data to compare arms yet[/dim] "
                 f"([dim]{n_t} treated / {n_h} holdout requests{sessions_note}"
-                f" — need {_MIN_PROXY_SAMPLE} per arm[/dim])"
+                f" — need {_MIN_PROXY_SAMPLE} requests and"
+                f" {_MIN_PROXY_SESSIONS} sessions per arm[/dim])"
             )
         else:
             body = "[dim]no measured data yet — the proxy has not logged any requests[/dim]"

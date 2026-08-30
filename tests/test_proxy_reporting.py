@@ -28,9 +28,18 @@ def _seed(state_dir: Path, records: list[meter.Record]) -> None:
 
 
 def _record(key: str, *, holdout: bool, input_tokens: int, **kw) -> meter.Record:
+    # Arms are drawn per session, and the panel gates on the distinct-session
+    # count, so a row with no session identity is a row the reporter cannot
+    # count toward a healthy sample. Spread rows deterministically across four
+    # sessions per arm by default; a test that cares about session shape (see
+    # test_proxy_panel_withholds_a_ratio_drawn_from_one_holdout_session) passes
+    # `session_key` explicitly.
+    arm = "h" if holdout else "t"
+    default_session = f"{arm}-sess-{sum(map(ord, key)) % 4}"
     return meter.Record(
         request_key=key,
         holdout=holdout,
+        session_key=kw.pop("session_key", default_session),
         transforms=kw.pop("transforms", []),
         est_saved_tokens=kw.pop("est_saved_tokens", 0),
         input_tokens=input_tokens,
@@ -330,3 +339,45 @@ def test_by_transform_help_names_the_unit_it_reports(tmp_path):
 
     assert result.exit_code == 0, result.output
     assert "measured proxy saving" not in result.output
+
+
+def test_proxy_panel_withholds_a_ratio_drawn_from_one_holdout_session(tmp_path):
+    """The request-count floor cannot see the failure it was added for.
+
+    Arms are assigned per SESSION, so every request inside one holdout session
+    is the same draw repeated. A single large session clears `n_h >= 30`
+    trivially — 400 requests here — and the panel would then print a bold
+    percentage comparing one cluster against many. That is the exact shape of
+    the "386295.8% cost" render the floor exists to prevent, at a scale the
+    floor cannot catch.
+    """
+    state_dir = tmp_path / "state"
+    for i in range(400):
+        _seed(
+            state_dir,
+            [
+                _record(
+                    f"t{i}",
+                    holdout=False,
+                    input_tokens=500,
+                    session_key=f"treated-{i % 8}",
+                )
+            ],
+        )
+    for i in range(400):
+        _seed(
+            state_dir,
+            [
+                _record(
+                    f"h{i}",
+                    holdout=True,
+                    input_tokens=1000,
+                    session_key="the-one-holdout-session",
+                )
+            ],
+        )
+    result = CliRunner().invoke(tokens_cmd, [], env=_env(tmp_path))
+    assert result.exit_code == 0, result.output
+    assert "not enough data" in result.output.lower()
+    assert "% saved" not in result.output
+    assert "% cost" not in result.output
