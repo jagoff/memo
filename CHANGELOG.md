@@ -9,6 +9,36 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Fixed
+
+- **`memo token-savings` published a percentage its own gate rejected.** It
+  printed `crusher_L1 +44.4% (measured, gate-passed)` while
+  `memo eval tokens --gate` exited 1 on that lever with `Δquality -0.48` — the
+  stored `passed: true` is a claim about the run that wrote it, not about
+  today, and nothing re-checked it. The saving fraction was also recorded
+  without the sample it was folded from, so the command could not tell a lever
+  measured over 49 live prompts from one measured over the 2 synthetic cases in
+  `eval/token_corpus.json` (whose own `_doc` predicts the quality guard should
+  fail). `LeverRow` now carries `n_samples`, `gate_metrics` records it, and a
+  lever folded from fewer than ten cases — or from a baseline written before
+  the count existed — is named rather than published. An empty gate now also
+  points at the context proxy, which is measured separately, so "no lever
+  passed" cannot read as "memo saves nothing". The pre-existing fixture omitted
+  `n_samples` entirely, which is why no test caught this.
+- **`memo config flags` reported the environment, not the configuration.** Its
+  `active` column was `active_flags()` — env vars only — so every flag pinned
+  through `memo config set` rendered blank, and a blank cell beside a default of
+  `False` reads as OFF. On this machine that hid 60 flags: the graph subsystem
+  showed as entirely disabled while `graph-config.md` had it on. Markdown config
+  is the channel that reaches daemons, hooks, and the MCP server, so the layer
+  the column omitted is the one that decides behaviour. The table now shows the
+  resolved `effective` value and the `source` layer that decided it
+  (`env` > `config` > `overlay` > `default`), `--active` means explicitly
+  configured anywhere rather than exported in this shell, and the raw env value
+  stays available as `active` in `--json`.
+- **Dead statement in `aggregate_capture`.** `len(samples) or 1` was evaluated
+  and discarded; the count it was computing is now the recorded `n_samples`.
+
 ## [4.14.8] - 2026-08-30
 
 ### Fixed

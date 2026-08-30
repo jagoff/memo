@@ -57,6 +57,11 @@ class LeverRow:
     tokens_on: int
     quality_off: float
     quality_on: float
+    # Independent cases the fractions above were folded from. Recorded because
+    # the baseline file is the ONLY thing `memo token-savings` sees: a
+    # `saved_frac` whose sample size was dropped here is unrecoverable
+    # downstream, and reads there exactly like one measured over a real corpus.
+    n_samples: int = 0
 
     @property
     def saved_frac(self) -> float:
@@ -105,6 +110,7 @@ def aggregate_recall(lever: str, samples: list[P1Sample]) -> LeverRow:
         tokens_on=sum(s.tokens_on for s in samples),
         quality_off=sum(s.prec_off for s in samples) / n,
         quality_on=sum(s.prec_on for s in samples) / n,
+        n_samples=len(samples),
     )
 
 
@@ -229,7 +235,6 @@ def _row_survived(row: Any, crushed_content: str) -> bool:
 
 def aggregate_capture(lever: str, samples: list[P2Sample]) -> LeverRow:
     """Fold per-case P2 samples into one LeverRow. Quality = mean row survival fraction."""
-    len(samples) or 1
     total_rows = sum(s.rows_total for s in samples) or 1
     survived_rows = sum(s.rows_survived for s in samples)
     return LeverRow(
@@ -239,6 +244,7 @@ def aggregate_capture(lever: str, samples: list[P2Sample]) -> LeverRow:
         tokens_on=sum(s.tokens_on for s in samples),
         quality_off=1.0,
         quality_on=survived_rows / total_rows,
+        n_samples=len(samples),
     )
 
 
@@ -249,6 +255,7 @@ def gate_metrics(rows: list[LeverRow]) -> dict[str, dict[str, float | bool]]:
             "saved_frac": round(r.saved_frac, 4),
             "quality_delta": round(r.quality_delta, 4),
             "passed": r.passed,
+            "n_samples": r.n_samples,
         }
         for r in rows
     }

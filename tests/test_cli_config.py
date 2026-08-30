@@ -191,3 +191,69 @@ def test_noninteractive_blocks_tui_even_with_tty(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "show" in result.output
     run.assert_not_called()
+
+
+def test_config_flags_reports_the_effective_value_and_its_source(tmp_path, monkeypatch):
+    """`config flags` must answer "what is in effect", not "what is in the env".
+
+    The `active` column was `active_flags()` — env vars only — so every flag a
+    user had pinned through `memo config set` (the *recommended* channel, the
+    only one that reaches daemons and hooks) rendered blank, which reads as OFF.
+    That is the exact misreading the Markdown config exists to prevent.
+    """
+    from click.testing import CliRunner
+
+    from memo.cli_config import config_group
+
+    cfg_dir = tmp_path / "memo-home"
+    (cfg_dir / "config").mkdir(parents=True)
+    (cfg_dir / "config" / "graph-config.md").write_text(
+        '# Graph config\n\n```toml\n[graph]\nreason_enabled = "on"\n```\n',
+        encoding="utf-8",
+    )
+
+    env = {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_CONFIG_DIR": str(cfg_dir),
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+    }
+    for key in ("MEMO_GRAPH_REASON_ENABLED",):
+        monkeypatch.delenv(key, raising=False)
+
+    result = CliRunner().invoke(config_group, ["flags", "--group", "graph", "--json"], env=env)
+    assert result.exit_code == 0, result.output
+    rows = {r["flag"]: r for r in json.loads(result.output)}
+
+    row = rows["MEMO_GRAPH_REASON_ENABLED"]
+    assert row["effective"] is True, "a flag pinned in Markdown config reads as OFF"
+    assert row["source"] == "config"
+
+
+def test_config_flags_active_filter_includes_markdown_config(tmp_path, monkeypatch):
+    """`--active` means "explicitly configured", not "exported in this shell"."""
+    from click.testing import CliRunner
+
+    from memo.cli_config import config_group
+
+    cfg_dir = tmp_path / "memo-home"
+    (cfg_dir / "config").mkdir(parents=True)
+    (cfg_dir / "config" / "graph-config.md").write_text(
+        '# Graph config\n\n```toml\n[graph]\nreason_enabled = "on"\n```\n',
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("MEMO_GRAPH_REASON_ENABLED", raising=False)
+
+    result = CliRunner().invoke(
+        config_group,
+        ["flags", "--group", "graph", "--active", "--json"],
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_CONFIG_DIR": str(cfg_dir),
+            "MEMO_DATA_DIR": str(tmp_path / "data"),
+            "MEMO_STATE_DIR": str(tmp_path / "state"),
+        },
+    )
+    assert result.exit_code == 0, result.output
+    names = {r["flag"] for r in json.loads(result.output)}
+    assert "MEMO_GRAPH_REASON_ENABLED" in names
