@@ -51,6 +51,17 @@ def _record(key: str, *, holdout: bool, input_tokens: int, **kw) -> meter.Record
     )
 
 
+def _panel_text(output: str) -> str:
+    """Panel body as one line: ANSI stripped, box borders dropped, runs of
+    whitespace collapsed. Rich wraps the body mid-sentence, so a plain
+    substring match against `result.output` fails on wrapped counts."""
+    import re
+
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", output)
+    plain = re.sub(r"[\u2500-\u257f]", " ", plain)
+    return " ".join(plain.split())
+
+
 def test_no_data_says_so_instead_of_printing_a_zero(tmp_path):
     result = CliRunner().invoke(tokens_cmd, [], env=_env(tmp_path))
     assert result.exit_code == 0
@@ -381,3 +392,34 @@ def test_proxy_panel_withholds_a_ratio_drawn_from_one_holdout_session(tmp_path):
     assert "not enough data" in result.output.lower()
     assert "% saved" not in result.output
     assert "% cost" not in result.output
+
+
+def test_a_one_request_session_does_not_count_toward_the_session_floor(tmp_path):
+    """The floor asks how many independent draws an arm holds.
+
+    Live ledger, 2026-08-30: the holdout arm read as 2 sessions on 37 real
+    requests from ONE session plus a single stray row keyed `live-sess-1`.
+    One more such row would have cleared the three-session floor and published
+    a ratio that is still one session of evidence. A session contributing a
+    single request cannot exhibit any within-session variation, which is
+    exactly what the session count exists to detect, so it is not a draw.
+    """
+    rows = [
+        _record(f"t{i}", holdout=False, input_tokens=100, session_key=f"t-sess-{i % 4}")
+        for i in range(40)
+    ]
+    rows += [
+        _record(f"h{i}", holdout=True, input_tokens=200, session_key="h-real") for i in range(38)
+    ]
+    rows += [
+        _record("stray-a", holdout=True, input_tokens=10, session_key="stray-a"),
+        _record("stray-b", holdout=True, input_tokens=10, session_key="stray-b"),
+    ]
+    _seed(tmp_path / "state", rows)
+
+    result = CliRunner().invoke(tokens_cmd, [], env=_env(tmp_path))
+
+    assert result.exit_code == 0, result.output
+    out = _panel_text(result.output)
+    assert "not enough data to compare arms yet" in out
+    assert "4/1 sessions" in out, "the stray one-request rows still count as draws"

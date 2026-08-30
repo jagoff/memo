@@ -53,6 +53,16 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   is the memory worth reading. Neither fixture stamped `superseded_at`, and the
   ordering fixture used ids whose filename order already matched the expected
   order, so the sort could not be observed as wrong.
+- **The proxy A/B session floor counted stray rows as independent draws.** The
+  distinct-session count treated any non-empty `session_key` as a session, so
+  the live holdout arm read as two sessions when it held 37 real requests from
+  ONE session plus a single stray row. One more such row would have cleared the
+  three-session floor added in 4.14.8 and published a ratio that is still one
+  session of evidence — the floor would have withheld the small version of the
+  bad number and shipped the large one, which is the exact failure it was added
+  to prevent. A session must now carry at least two requests to count: a
+  singleton cannot exhibit any within-session variation, which is precisely
+  what the session count exists to detect.
 
 ## [4.14.8] - 2026-08-30
 
