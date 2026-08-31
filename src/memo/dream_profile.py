@@ -249,6 +249,14 @@ _SYS = (
     "fold in the new memories, drop anything superseded. State ONLY what the "
     "memories state — never invent. Plain markdown bullet points under short "
     "headings (identity, preferences, conventions, key decisions). "
+    # Without this the model fills `identity` with whatever the recent
+    # sessions happened to be about. Verified 2026-08-31: a memory titled
+    # "Qué es memo (identidad del proyecto)" sat at row 1 of the 40-row source
+    # window and the rewrite still opened with last week's token work, so a
+    # session still had to be told what the project was.
+    "Under `identity`, lead with WHAT THE PROJECT OR SYSTEM IS whenever a "
+    "memory states it — purpose, stack and scope — before anything about "
+    "recent work; that line is why a new session does not have to ask. "
     "No frontmatter, no top-level title. Stay under {budget} characters."
 )
 

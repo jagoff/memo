@@ -368,3 +368,15 @@ def test_render_profile_collapses_repeated_bullets():
     )
 
     assert out.count("Ensure the decision is respected.") == 1
+
+
+def test_distill_prompt_defines_what_identity_means():
+    """Without this, `identity` gets filled with whatever the recent sessions
+    were about. Verified 2026-08-31: a `decision` memory titled "Qué es memo
+    (identidad del proyecto)" sat at row 1 of the 40-row source window and the
+    rewrite still described last week's token work, so a session still had to
+    be told what the project is.
+    """
+    from memo.dream_profile import _SYS
+
+    assert "WHAT THE PROJECT OR SYSTEM IS" in _SYS

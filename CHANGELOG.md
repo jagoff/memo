@@ -31,6 +31,17 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   (non-bullet lines are never deduped). Measured across the seven live profile
   documents: -9.2% overall, -23.2% on the global one, ~238 tokens per session
   for a briefing loading global plus project.
+- **The profile's `identity` section never said what the project was.** The
+  distill prompt lists `identity` as a heading without defining it, so the
+  model filled it with whatever the recent sessions were about — a session
+  still had to be told what the project is, which is the thing the profile
+  exists to carry. Verified against the live store: a `decision` memory
+  titled "Qué es memo (identidad del proyecto)" sat at row 1 of the 40-row
+  source window and the rewrite still opened with last week's token work.
+  `identity` now leads with what the project or system IS whenever a memory
+  states it. After the change the memo profile opens with "a local-first
+  semantic memory for AI agents. Stack: embeddings MLX + hybrid sqlite-vec…",
+  and the SessionStart briefing carries it.
 - **`### Memory relations` named nothing.** It rendered `- \`492e8d82\` related
   \`715ed835\`` — two hex prefixes and a verb, the only graph output in the
   briefing a human could not read. Titles now come from one `get_batch`, and a
