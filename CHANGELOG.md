@@ -9,6 +9,8 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.15.0] - 2026-08-31
+
 ### Fixed
 
 - **The transcript panel published a net drawn from a 9-turn control.** It
