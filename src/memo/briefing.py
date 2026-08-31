@@ -579,22 +579,19 @@ def relation_lines(store: Any, *, limit: int = 3) -> list[str]:
     memories no longer resolve is dropped rather than rendered as bare ids —
     the same rule the reliability nudge follows.
     """
-    try:
-        judged = [
-            row
-            for row in store.list_relations(status="judged", limit=12)
-            if row.get("relation") not in {None, "not_conflict"}
-        ][:limit]
-    except Exception:
-        # A graph read must never sink the briefing.
-        return []
+    # No local guard: the only caller wraps this in `contextlib.suppress`, the
+    # convention for every graph read in `unified_briefing`. A second handler
+    # here would just re-state it, and the repo's quality gate ratchets broad
+    # excepts per file.
+    judged = [
+        row
+        for row in store.list_relations(status="judged", limit=12)
+        if row.get("relation") not in {None, "not_conflict"}
+    ][:limit]
     if not judged:
         return []
     ids = {str(r["source_id"]) for r in judged} | {str(r["target_id"]) for r in judged}
-    try:
-        titles = {str(r.get("id")): str(r.get("title") or "") for r in store.get_batch(sorted(ids))}
-    except Exception:
-        titles = {}
+    titles = {str(r.get("id")): str(r.get("title") or "") for r in store.get_batch(sorted(ids))}
     lines: list[str] = []
     for row in judged:
         src, tgt = str(row["source_id"]), str(row["target_id"])
