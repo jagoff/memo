@@ -423,3 +423,141 @@ def test_a_one_request_session_does_not_count_toward_the_session_floor(tmp_path)
     out = _panel_text(result.output)
     assert "not enough data to compare arms yet" in out
     assert "4/1 sessions" in out, "the stray one-request rows still count as draws"
+
+
+def _render(panel) -> str:
+    """Panel as one plain line — same normalisation as `_panel_text`."""
+    import io
+    import re
+
+    from rich.console import Console
+
+    buf = io.StringIO()
+    Console(file=buf, width=200, no_color=True).print(panel)
+    plain = re.sub(r"[─-╿]", " ", buf.getvalue())
+    return " ".join(plain.split())
+
+
+def _measured(*, grounded_turns: int, ungrounded_turns: int) -> dict:
+    return {
+        "sessions": 100,
+        "answer_tok": 1_000_000,
+        "tool_tok": 17_000_000,
+        "injected_tokens": 280_000,
+        "input_tok": 0,
+        "cache_read_tok": 0,
+        "cache_creation_tok": 0,
+        "models": {},
+        "proxy": {
+            "grounded_tool_tok_per_turn": 6958.46,
+            "ungrounded_tool_tok_per_turn": 5166.89,
+            "delta": -1791.57,
+            "injected_tok_per_turn": 113.72,
+            "net_tok_per_turn": -1905.29,
+            "grounded_turns": grounded_turns,
+            "ungrounded_turns": ungrounded_turns,
+        },
+    }
+
+
+def test_transcript_net_is_withheld_when_the_control_cohort_is_thin():
+    """Same standard the proxy panel already applies on this screen.
+
+    Live ledger, 2026-08-31: the "ungrounded" control was 3 sessions / 9 turns
+    (1, 2 and 6 turns each) against 100 grounded sessions with a median of 15
+    turns, and the panel printed `1,905 tok/turn cost` in bold red. The cohorts
+    are observational and confounded by session length — the 9 sessions in
+    neither cohort, equally short, spend MORE per turn than the grounded ones —
+    so the sign is not evidence in either direction. `_proxy_panel` withholds
+    below its floor for exactly this reason, in this same module.
+    """
+    from memo.cli_tokens import _transcript_panel
+
+    out = _render(_transcript_panel(_measured(grounded_turns=2469, ungrounded_turns=9)))
+
+    assert "1,905" not in out, "a net drawn from a 9-turn control is printed as a result"
+    assert "9 ungrounded" in out, "the sample that withheld it is not disclosed"
+
+
+def test_transcript_net_is_published_once_both_cohorts_are_thick():
+    from memo.cli_tokens import _transcript_panel
+
+    out = _render(_transcript_panel(_measured(grounded_turns=2469, ungrounded_turns=120)))
+
+    assert "1,905 tok/turn cost" in out
+
+
+def test_summarize_reports_the_prefix_counterfactual_without_a_control_arm():
+    """ "Nothing to report" and "no saving" are different claims.
+
+    The holdout A/B answers whether the whole prompt got cheaper, and it needs
+    a control arm that fills at MEMO_PROXY_HOLDOUT_FRAC — months, on real
+    traffic. But the transform is a pure function of the payload: the tokens it
+    removed are recorded per request, and so is the cache tier the rest of the
+    prefix actually billed at. Weighting the removed volume at the SAME
+    observed prefix weight gives a counterfactual that needs no control arm.
+    It is not an A/B and must never be printed as one.
+    """
+    from memo.proxy import meter
+
+    rows = [
+        # 1000 removed, and the surviving prefix billed entirely as cache-read
+        # (0.1x), so the counterfactual adds 100 tok-equiv to a 100 tok-equiv
+        # actual — a 50% saving.
+        meter.Record(
+            request_key=f"t{i}",
+            holdout=False,
+            session_key="s1",
+            transforms=["toolschemas"],
+            est_saved_tokens=1000,
+            input_tokens=0,
+            output_tokens=10,
+            cache_creation_tokens=0,
+            cache_read_tokens=1000,
+            retrieved=0,
+        )
+        for i in range(5)
+    ]
+    import tempfile
+    from pathlib import Path
+
+    state = Path(tempfile.mkdtemp()) / "state"
+    for r in rows:
+        meter.append(state, r)
+
+    cf = meter.summarize(state)["prefix_counterfactual"]
+
+    assert cf["removed_tok"] == 5000
+    assert cf["effective_prefix_weight"] == 0.1
+    assert cf["saving_frac"] == 0.5
+    assert cf["n"] == 5
+
+
+def test_proxy_panel_shows_the_counterfactual_and_never_calls_it_an_ab(tmp_path):
+    """A withheld A/B must not read as "memo saves nothing"."""
+    # Built directly: `_record` pins both cache counters to 0, so a prefix
+    # weight cannot be derived from it — the counterfactual would be None and
+    # this test would pass for the wrong reason.
+    rows = [
+        meter.Record(
+            request_key=f"t{i}",
+            holdout=False,
+            session_key="s1",
+            transforms=["toolschemas"],
+            est_saved_tokens=1000,
+            input_tokens=0,
+            output_tokens=10,
+            cache_creation_tokens=0,
+            cache_read_tokens=1000,
+            retrieved=0,
+        )
+        for i in range(5)
+    ]
+    _seed(tmp_path / "state", rows)
+
+    result = CliRunner().invoke(tokens_cmd, [], env=_env(tmp_path))
+
+    assert result.exit_code == 0, result.output
+    out = _panel_text(result.output)
+    assert "counterfactual" in out, "the deterministic estimate is not surfaced"
+    assert "not an A/B" in out, "an estimate is presented without saying it is one"

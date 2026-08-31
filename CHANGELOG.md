@@ -9,6 +9,58 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Fixed
+
+- **The transcript panel published a net drawn from a 9-turn control.** It
+  printed `1,905 tok/turn cost` in bold against an "ungrounded" cohort of 3
+  sessions totalling 9 turns (1, 2 and 6), versus 100 grounded sessions with a
+  median of 15. The cohorts are observational and confounded by session
+  length — a session that never grounds is usually one that barely started, and
+  the 9 sessions in NEITHER cohort, equally short, spent MORE per turn than the
+  grounded ones. The sign was not evidence in either direction. `_proxy_panel`
+  already withholds below its floor in this same module, calling a too-thin
+  sample "not a measurement with a caveat — not a measurement"; that standard
+  now applies to both panels instead of one getting the word "provisional".
+- **Duplicate title and repeated bullets in the dream profile.** The distill
+  prompt says "no top-level title" and asks for a distillation, but nothing
+  checked either. Live `_profile/profile.md`: `# Profile — global` on lines 8
+  AND 10, and 13 of 62 bullets literal duplicates — one line repeated 12
+  times — in a document the briefing injects verbatim on every session, where
+  it was 43% of the whole payload. `render_profile` now drops an echoed
+  heading and collapses repeated bullets, order-preserving and deterministic
+  (non-bullet lines are never deduped). Measured across the seven live profile
+  documents: -9.2% overall, -23.2% on the global one, ~238 tokens per session
+  for a briefing loading global plus project.
+- **The profile's `identity` section never said what the project was.** The
+  distill prompt lists `identity` as a heading without defining it, so the
+  model filled it with whatever the recent sessions were about — a session
+  still had to be told what the project is, which is the thing the profile
+  exists to carry. Verified against the live store: a `decision` memory
+  titled "Qué es memo (identidad del proyecto)" sat at row 1 of the 40-row
+  source window and the rewrite still opened with last week's token work.
+  `identity` now leads with what the project or system IS whenever a memory
+  states it. After the change the memo profile opens with "a local-first
+  semantic memory for AI agents. Stack: embeddings MLX + hybrid sqlite-vec…",
+  and the SessionStart briefing carries it.
+- **`### Memory relations` named nothing.** It rendered `- \`492e8d82\` related
+  \`715ed835\`` — two hex prefixes and a verb, the only graph output in the
+  briefing a human could not read. Titles now come from one `get_batch`, and a
+  row whose memories no longer resolve is dropped rather than shown as bare
+  ids.
+
+### Added
+
+- **`memo tokens` reports a prefix counterfactual.** The holdout A/B is the
+  better instrument but its control arm fills per session at
+  `MEMO_PROXY_HOLDOUT_FRAC`, so "not enough data to compare arms" was reading
+  as "memo saves nothing" — a different and false claim. The transforms are
+  pure functions of the payload: the volume removed is recorded per request,
+  and the surviving prefix's own counters say what tier that volume would have
+  billed at. Weighting the removed volume at that same observed weight needs no
+  control arm. Measured on 10,398 live requests: **54.1%**, 1.62B tokens of
+  prefix removed at the 0.131x weight the surviving prefix actually billed at.
+  Labelled "not an A/B" wherever it appears, and never substituted for one.
+
 ## [4.14.10] - 2026-08-30
 
 ### Fixed
