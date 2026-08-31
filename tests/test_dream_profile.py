@@ -325,3 +325,46 @@ def test_run_profile_pass_never_raises(tmp_path):
     res = dp.run_profile_pass(_mk_cfg(tmp_path), _Boom())
     assert res["status"] == "error"
     assert "store exploded" in res["error"]
+
+
+def test_render_profile_drops_a_title_the_narrative_repeats():
+    """`_SYS` tells the model "no top-level title"; nothing checked.
+
+    Live `_profile/profile.md` on 2026-08-31 carried `# Profile — global` on
+    lines 8 AND 10 — `render_profile` adds the heading and the narrative had
+    echoed it. An instruction to a model is not a guarantee.
+    """
+    from memo.dream_profile import render_profile
+
+    out = render_profile(
+        scope="global",
+        narrative="# Profile — global\n\n- **identity**\n  - Ships memo.",
+        rules=[],
+        source_ids=["abc12345"],
+        updated="2026-08-31T00:00:00+00:00",
+        char_budget=4000,
+    )
+
+    assert out.count("# Profile — global") == 1
+
+
+def test_render_profile_collapses_repeated_bullets():
+    """The briefing injects this document verbatim, every session.
+
+    Live `profile.md` on 2026-08-31: 62 bullets, 49 distinct — one line
+    ("Ensure the `decision to not touch the clustering` is respected.")
+    repeated 12 times, in a document that was 43% of the whole briefing.
+    """
+    from memo.dream_profile import render_profile
+
+    dup = "  - Ensure the decision is respected."
+    out = render_profile(
+        scope="global",
+        narrative="- **key decisions**\n" + "\n".join([dup] * 12),
+        rules=[],
+        source_ids=["abc12345"],
+        updated="2026-08-31T00:00:00+00:00",
+        char_budget=4000,
+    )
+
+    assert out.count("Ensure the decision is respected.") == 1

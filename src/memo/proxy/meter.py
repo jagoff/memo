@@ -274,6 +274,47 @@ def _distinct_sessions(rows: list[dict]) -> int:
     return sum(1 for n in counts.values() if n >= _MIN_SESSION_REQUESTS)
 
 
+def _prefix_counterfactual(treated: list[dict]) -> dict | None:
+    """What the treated arm would have billed had the prefix transforms not run.
+
+    The holdout A/B answers the same question experimentally and is the better
+    instrument, but its control arm fills at `MEMO_PROXY_HOLDOUT_FRAC` per
+    SESSION — months of real traffic before three independent draws exist. In
+    the meantime "not enough data to compare arms" reads as "memo saves
+    nothing", which is a different and false claim.
+
+    This needs no control arm because the transform is a pure function of the
+    payload: `est_saved_tokens` is the volume it removed, and the surviving
+    prefix's own counters say what tier that volume would have billed at. The
+    removed tokens are prefix content — schemas sit at the head of the prompt,
+    ahead of the conversation — so they are weighted at the SAME effective
+    weight the rest of the prefix actually achieved, rather than at a guessed
+    one. Measured on this machine 2026-08-31: 98.9% of prefix volume billed as
+    cache-read, an effective weight of 0.114x.
+
+    It is a counterfactual under a stated assumption, NOT a measured A/B, and
+    callers must label it as such. Returns None when nothing was rewritten.
+    """
+    removed = sum(_num(r, "est_saved_tokens") for r in treated)
+    if removed <= 0:
+        return None
+    prefix_volume = sum(
+        _num(r, "cache_read_tokens") + _num(r, "cache_creation_tokens") for r in treated
+    )
+    if prefix_volume <= 0:
+        return None
+    prefix_cost = sum(_prompt_cost(r) - _num(r, "input_tokens") for r in treated)
+    weight = prefix_cost / prefix_volume
+    actual = sum(_prompt_cost(r) for r in treated)
+    extra = removed * weight
+    return {
+        "removed_tok": int(removed),
+        "effective_prefix_weight": round(weight, 4),
+        "saving_frac": round(extra / (actual + extra), 6) if (actual + extra) else None,
+        "n": len(treated),
+    }
+
+
 def summarize(state_dir: Path) -> dict:
     """Treated vs holdout on real provider counters. None means 'no data yet'."""
     treated, holdout, passthrough, skipped = _partition_rows(ledger_path(state_dir))
@@ -308,6 +349,10 @@ def summarize(state_dir: Path) -> dict:
         "mean_prompt_cost_treated": mean_cost_t,
         "mean_prompt_cost_holdout": mean_cost_h,
         "measured_saving_frac": saving,
+        # A counterfactual, not an arm comparison — see `_prefix_counterfactual`.
+        # Reported alongside the A/B so a control arm that is still filling
+        # does not read as a measured zero.
+        "prefix_counterfactual": _prefix_counterfactual(treated),
         "by_transform": _by_transform(treated),
         "retrieved": sum(_num(r, "retrieved") for r in treated),
         "skipped": skipped,

@@ -118,19 +118,35 @@ def _transcript_panel(measured: dict) -> Panel:
     # memo save tokens" — tool-spend delta alone ignores the context memo
     # injects to earn it. Negative means memo cost more than it saved; that
     # is a real result and it is reported as one.
+    # Both cohorts are observational, not assigned, and they are confounded by
+    # session length: a session that never grounds is usually a session that
+    # barely started. Measured 2026-08-31 on the live ledger — 100 grounded
+    # sessions (median 15 turns) against an "ungrounded" control of 3 sessions
+    # totalling 9 turns, while the 9 sessions in NEITHER cohort, equally short,
+    # spent MORE per turn than the grounded ones. So the sign was not evidence
+    # in either direction, and the panel printed it in bold anyway.
+    #
+    # `_proxy_panel` withholds below its floor for exactly this reason, three
+    # screens-worth of code below, with the note that a sample too thin to
+    # compare is not a measurement with a caveat — it is not a measurement.
+    # Applying that standard to one panel and a "provisional" adjective to the
+    # other, on the same screen, is the inconsistency this removes.
+    thin = min(p["grounded_turns"], p["ungrounded_turns"]) < _MIN_COHORT_TURNS
     if net is None:
         net_line = "[dim]net: needs grounded and ungrounded sessions to compare[/dim]"
+    elif thin:
+        net_line = (
+            "[dim]net: not enough data to compare cohorts yet "
+            f"({p['grounded_turns']} grounded / {p['ungrounded_turns']} ungrounded turns "
+            f"— need {_MIN_COHORT_TURNS} per cohort)[/dim]"
+        )
     else:
         colour = "green" if net > 0 else "red"
         verb = "saved" if net > 0 else "cost"
-        # Both cohorts are observational, not assigned: a thin one means the
-        # sign is not yet evidence. Say so rather than let the number stand
-        # unqualified.
-        thin = min(p["grounded_turns"], p["ungrounded_turns"]) < _MIN_COHORT_TURNS
         net_line = (
             f"[bold {colour}]{abs(net):,.0f} tok/turn {verb}[/bold {colour}] net of injection "
             f"[dim](n={p['grounded_turns']} grounded / {p['ungrounded_turns']} ungrounded "
-            f"turns{' · provisional, thin cohort' if thin else ''})[/dim]"
+            f"turns)[/dim]"
         )
     return Panel(
         Text.from_markup(
@@ -204,6 +220,19 @@ def _proxy_panel(proxy: dict) -> Panel:
             f"(treated {cost_t:.0f} vs holdout {cost_h:.0f} tok-equiv/request; "
             f"raw input_tokens {mean_in_t:.0f} vs {mean_in_h:.0f}) "
             f"[dim](n={n_t} treated / {n_h} holdout requests{sessions_note})[/dim]"
+        )
+    # An A/B that is still filling its control arm must not read as a measured
+    # zero. The counterfactual needs no control arm (see
+    # `meter._prefix_counterfactual`) and is labelled so it can never be
+    # mistaken for the arm comparison above it.
+    cf = proxy.get("prefix_counterfactual")
+    if cf and cf.get("saving_frac") is not None:
+        body += (
+            f"\n[dim]prefix counterfactual (not an A/B): "
+            f"[/dim][bold]{cf['saving_frac'] * 100:.1f}%[/bold][dim] — "
+            f"{_fmt_tokens(cf['removed_tok'])} tok of prefix removed over {cf['n']} requests, "
+            f"priced at the {cf['effective_prefix_weight']:.3f}x weight the surviving "
+            f"prefix actually billed at[/dim]"
         )
     if proxy.get("retrieved"):
         body += f"\n[dim]{proxy['retrieved']} recovered originals (cost their tokens twice)[/dim]"

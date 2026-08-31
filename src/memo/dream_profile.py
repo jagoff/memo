@@ -97,6 +97,38 @@ def project_buckets(rows: list[dict[str, Any]]) -> list[str]:
     return seen
 
 
+def _clean_narrative(narrative: str, *, scope: str) -> str:
+    """Strip what the model was told not to emit, and what it repeated.
+
+    `_SYS` asks for "no top-level title" and for a distillation, but an
+    instruction to a model is not a guarantee and nothing checked. Measured on
+    the live `_profile/profile.md`, 2026-08-31: `# Profile — global` appeared
+    on lines 8 AND 10 (the document's own heading plus the echoed one), and 13
+    of its 62 bullets were literal duplicates — one line repeated 12 times — in
+    a document that was 43% of the whole SessionStart briefing. The briefing
+    injects this file verbatim on every session, so each repeat is billed
+    again, forever.
+
+    Deterministic and order-preserving: the first occurrence of a bullet stays
+    where the model put it, later identical ones are dropped. Comparison is on
+    the stripped text so indentation does not defeat it; non-bullet lines
+    (headings, blanks, prose) are never deduped — repetition there can be
+    meaningful.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for line in (narrative or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# ") and stripped.lstrip("# ").strip() == f"Profile — {scope}":
+            continue
+        if stripped.startswith(("- ", "* ")):
+            if stripped in seen:
+                continue
+            seen.add(stripped)
+        out.append(line)
+    return "\n".join(out).strip()
+
+
 def render_profile(
     *,
     scope: str,
@@ -129,7 +161,7 @@ def render_profile(
         rule_lines += [f"- {text} `[{rid[:8]}]`" for rid, text in rules]
     budget = max(0, char_budget)
     remaining = budget - len("\n".join(rule_lines))
-    body = (narrative or "").strip()
+    body = _clean_narrative(narrative, scope=scope)
     if len(body) > remaining:
         body = body[: max(0, remaining - 1)].rstrip() + ("…" if remaining > 0 else "")
     parts = list(head)

@@ -568,6 +568,46 @@ def profile_lines(cfg: Any, *, cwd: str | None = None) -> list[str]:
     return lines
 
 
+def relation_lines(store: Any, *, limit: int = 3) -> list[str]:
+    """``### Memory relations`` — judged relations, named.
+
+    The rows carry ids only, and the section used to render them raw:
+    ``- `492e8d82` related `715ed835``. Two hex prefixes and a verb name
+    nothing a reader can act on, and it was the one piece of graph output in
+    the briefing a human could not read. Titles come from a single
+    `get_batch`, so naming them costs one query, not one per row. A row whose
+    memories no longer resolve is dropped rather than rendered as bare ids —
+    the same rule the reliability nudge follows.
+    """
+    try:
+        judged = [
+            row
+            for row in store.list_relations(status="judged", limit=12)
+            if row.get("relation") not in {None, "not_conflict"}
+        ][:limit]
+    except Exception:
+        # A graph read must never sink the briefing.
+        return []
+    if not judged:
+        return []
+    ids = {str(r["source_id"]) for r in judged} | {str(r["target_id"]) for r in judged}
+    try:
+        titles = {str(r.get("id")): str(r.get("title") or "") for r in store.get_batch(sorted(ids))}
+    except Exception:
+        titles = {}
+    lines: list[str] = []
+    for row in judged:
+        src, tgt = str(row["source_id"]), str(row["target_id"])
+        s_title, t_title = titles.get(src), titles.get(tgt)
+        if not s_title or not t_title:
+            continue
+        lines.append(
+            f"- `{src[:8]}` {_clip(s_title, limit=48)} "
+            f"**{row['relation']}** `{tgt[:8]}` {_clip(t_title, limit=48)}"
+        )
+    return ["### Memory relations", "", *lines, ""] if lines else []
+
+
 def code_impact_lines(mem: Any, cwd: str) -> list[str]:
     """Render linked memories affected by working-tree changes."""
     from memo.flags import flag_int
@@ -669,19 +709,7 @@ def memo_native_briefing_lines(
 
     # Judged relation truth only; pending candidates belong to review surfaces.
     with contextlib.suppress(Exception):
-        judged = [
-            row
-            for row in mem.store.list_relations(status="judged", limit=12)
-            if row.get("relation") not in {None, "not_conflict"}
-        ][:3]
-        if judged:
-            lines.extend(["### Memory relations", ""])
-            for row in judged:
-                lines.append(
-                    f"- `{str(row['source_id'])[:8]}` {row['relation']} "
-                    f"`{str(row['target_id'])[:8]}`"
-                )
-            lines.append("")
+        lines.extend(relation_lines(mem.store))
 
     # ── Open loops: recently updated memories ────────────────────────────
     try:
@@ -793,5 +821,6 @@ __all__ = [
     "operational_briefing_lines",
     "proactive_lines",
     "profile_lines",
+    "relation_lines",
     "temporal_fact_lines",
 ]
