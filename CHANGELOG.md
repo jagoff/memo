@@ -9,6 +9,8 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.16.0] - 2026-09-01
+
 ### Added
 
 - **`--strict-runtime` now checks the LaunchAgents too.** It compared `memo`
