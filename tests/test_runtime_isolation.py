@@ -708,3 +708,82 @@ def _clear_memo_env(monkeypatch):
     for key in cli_mod._MCP_ENV_FORWARD_KEYS:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.delenv("DEVIN_DESKTOP_MCP_CONFIG", raising=False)
+
+
+def test_launchagents_pointing_at_another_runtime_are_reported(tmp_path):
+    """The check that would have caught a proxy 12 versions behind.
+
+    `com.memo.proxy`'s plist hard-coded `~/.local/share/memo/proxy-runtime/`,
+    a venv no code in this repo creates or updates. On 2026-09-01 it was
+    running memo 4.14.3 while the tool install was at 4.15.0, so every proxy
+    fix shipped in between had never executed — and `--strict-runtime` could
+    not see it, because it only ever compared `memo` against `memo-mcp`.
+    """
+    from memo.runtime.detect import launchagent_runtime_warnings
+
+    agents = tmp_path / "LaunchAgents"
+    agents.mkdir()
+    good = tmp_path / "good" / "bin" / "memo"
+    stale = tmp_path / "stale" / "bin" / "memo"
+    for exe in (good, stale):
+        exe.parent.mkdir(parents=True)
+        exe.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    def _plist(program: Path) -> str:
+        return (
+            '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>'
+            "<key>ProgramArguments</key><array>"
+            f"<string>{program}</string><string>proxy</string>"
+            "</array></dict></plist>\n"
+        )
+
+    (agents / "com.memo.chat.plist").write_text(_plist(good), encoding="utf-8")
+    (agents / "com.memo.proxy.plist").write_text(_plist(stale), encoding="utf-8")
+
+    warnings = launchagent_runtime_warnings(agents, good.parent.parent)
+
+    assert len(warnings) == 1, warnings
+    assert "com.memo.proxy" in warnings[0]
+    assert "stale" in warnings[0]
+
+
+def test_launchagent_check_is_silent_when_every_agent_shares_the_runtime(tmp_path):
+    from memo.runtime.detect import launchagent_runtime_warnings
+
+    agents = tmp_path / "LaunchAgents"
+    agents.mkdir()
+    exe = tmp_path / "good" / "bin" / "memo"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("#!/bin/sh\n", encoding="utf-8")
+    (agents / "com.memo.chat.plist").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>'
+        "<key>ProgramArguments</key><array>"
+        f"<string>{exe}</string></array></dict></plist>\n",
+        encoding="utf-8",
+    )
+
+    assert launchagent_runtime_warnings(agents, exe.parent.parent) == []
+
+
+def test_launchagent_check_ignores_an_agent_that_runs_a_wrapper_script(tmp_path):
+    """`com.memo.nightly` launches `memo-nightly.sh`, not a memo binary.
+
+    A script has no environment root, so it resolved to `/` and the first
+    version of this check reported the healthy nightly agent as drifted. A
+    check that cries wolf on a correct install is one nobody reads.
+    """
+    from memo.runtime.detect import launchagent_runtime_warnings
+
+    agents = tmp_path / "LaunchAgents"
+    agents.mkdir()
+    script = tmp_path / "bin" / "memo-nightly.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text("#!/bin/sh\n", encoding="utf-8")
+    (agents / "com.memo.nightly.plist").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>'
+        "<key>ProgramArguments</key><array>"
+        f"<string>{script}</string></array></dict></plist>\n",
+        encoding="utf-8",
+    )
+
+    assert launchagent_runtime_warnings(agents, tmp_path / "other") == []

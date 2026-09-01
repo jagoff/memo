@@ -561,3 +561,69 @@ def test_proxy_panel_shows_the_counterfactual_and_never_calls_it_an_ab(tmp_path)
     out = _panel_text(result.output)
     assert "counterfactual" in out, "the deterministic estimate is not surfaced"
     assert "not an A/B" in out, "an estimate is presented without saying it is one"
+
+
+def test_ledger_rows_carry_a_timestamp_so_before_and_after_can_be_compared(tmp_path):
+    """Without one the ledger cannot be sliced by time.
+
+    2026-09-01: comparing the prefix weight before and after a proxy restart
+    required counting lines and hard-coding the offset, because no row said
+    when it was written. A ledger that only answers "all of history" cannot
+    answer whether a change helped.
+    """
+    from memo.proxy import meter
+
+    state = tmp_path / "state"
+    meter.append(
+        state,
+        meter.Record(request_key="r1", holdout=False, session_key="s1", transforms=["toolschemas"]),
+    )
+    row = json.loads((meter.ledger_path(state)).read_text().splitlines()[0])
+
+    assert row["ts"], "no timestamp on the row"
+    from datetime import datetime
+
+    assert datetime.fromisoformat(row["ts"]).tzinfo is not None, "timestamp is not tz-aware"
+
+
+def test_tokens_since_filters_the_ledger(tmp_path):
+    """`--since` is what turns "did the restart help?" into one command."""
+    from memo.proxy import meter
+
+    state = tmp_path / "state"
+    rows = [
+        {
+            "schema": meter.LEDGER_SCHEMA,
+            "request_key": "old",
+            "holdout": False,
+            "session_key": "s1",
+            "transforms": ["toolschemas"],
+            "est_saved_tokens": 10,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 100,
+            "retrieved": 0,
+            "ts": "2026-01-01T00:00:00+00:00",
+        },
+        {
+            "schema": meter.LEDGER_SCHEMA,
+            "request_key": "new",
+            "holdout": False,
+            "session_key": "s1",
+            "transforms": ["toolschemas"],
+            "est_saved_tokens": 10,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 100,
+            "retrieved": 0,
+            "ts": "2026-09-01T00:00:00+00:00",
+        },
+    ]
+    p = meter.ledger_path(state)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+    assert meter.summarize(state)["n_treated"] == 2
+    assert meter.summarize(state, since="2026-06-01T00:00:00+00:00")["n_treated"] == 1

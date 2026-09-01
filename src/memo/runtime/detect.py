@@ -101,6 +101,52 @@ def is_homebrew_install() -> bool:
     )
 
 
+def launchagent_runtime_warnings(agents_dir: Path, primary_root: Path | None) -> list[str]:
+    """`com.memo.*` LaunchAgents whose program is NOT in the primary runtime.
+
+    `--strict-runtime` compared `memo` against `memo-mcp` and stopped there,
+    so a daemon launched from a third runtime was invisible to it. Measured
+    2026-09-01: `com.memo.proxy`'s plist hard-coded
+    `~/.local/share/memo/proxy-runtime/`, a venv nothing in this repo creates
+    or upgrades. It was running memo 4.14.3 against a 4.15.0 tool install —
+    twelve releases of proxy fixes that had never executed, with every gate
+    green the whole time, because the agent is the thing that serves traffic
+    and nothing compared it to anything.
+
+    Reads the plist as text rather than importing a parser: the value needed
+    is the first `<string>` of `ProgramArguments`, and a doctor check must not
+    fail because a plist is malformed. Silent when the directory is absent
+    (non-macOS, or no agents installed).
+    """
+    if primary_root is None or not agents_dir.is_dir():
+        return []
+    import re
+
+    out: list[str] = []
+    for path in sorted(agents_dir.glob("com.memo.*.plist")):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        m = re.search(r"<key>ProgramArguments</key>\s*<array>\s*<string>([^<]+)</string>", text)
+        if not m:
+            continue
+        program = _safe_resolve(Path(m.group(1).strip()))
+        # Only agents that launch a memo BINARY are comparable. `com.memo.nightly`
+        # runs a shell wrapper (`memo-nightly.sh`), which has no environment root
+        # of its own — reporting it would be a false positive, and a check that
+        # cries wolf on a healthy install is one nobody reads.
+        if program is None or program.name not in {"memo", "memo-mcp"}:
+            continue
+        root = _env_root_for_bin(program)
+        if root is not None and root != primary_root:
+            out.append(
+                f"{path.stem} runs from {root}, not the active runtime "
+                f"{primary_root} — `memo ops install {path.stem.rsplit('.', 1)[-1]}` repoints it"
+            )
+    return out
+
+
 def _runtime_install_report(
     cwd: Path | None = None, *, package_file: Path | None = None
 ) -> dict[str, Any]:
@@ -117,6 +163,9 @@ def _runtime_install_report(
     mode = _install_mode(primary_root)
 
     warnings: list[str] = []
+    warnings.extend(
+        launchagent_runtime_warnings(Path.home() / "Library" / "LaunchAgents", primary_root)
+    )
     if memo_resolved is None:
         warnings.append("`memo` is not on PATH")
     if mcp_resolved is None:

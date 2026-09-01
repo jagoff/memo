@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 LEDGER_SCHEMA = "memo.proxy.requests.v1"
@@ -129,7 +130,16 @@ def append(state_dir: Path, record: Record) -> None:
     path = ledger_path(state_dir)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        row = {"schema": LEDGER_SCHEMA, **asdict(record)}
+        # Stamped here, not carried on `Record`: every writer gets it without
+        # touching a call site, and the value is the moment the row was
+        # durable. Without it the ledger only answers "all of history" —
+        # comparing the prefix weight before and after a proxy restart on
+        # 2026-09-01 meant counting lines and hard-coding the offset.
+        row = {
+            "schema": LEDGER_SCHEMA,
+            **asdict(record),
+            "ts": datetime.now(tz=UTC).isoformat(),
+        }
         with path.open("a", encoding="utf-8") as fh:
             fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -146,7 +156,9 @@ def _num(row: dict, key: str) -> int:
     return val if isinstance(val, int) else 0
 
 
-def _partition_rows(path: Path) -> tuple[list[dict], list[dict], int, int]:
+def _partition_rows(
+    path: Path, *, since: str | None = None
+) -> tuple[list[dict], list[dict], int, int]:
     """Split the ledger into the two arms, plus the two things that are neither.
 
     Returns `(treated, holdout, passthrough, skipped)`. A passthrough row was
@@ -179,7 +191,12 @@ def _partition_rows(path: Path) -> tuple[list[dict], list[dict], int, int]:
             continue
         if not isinstance(row, dict):
             skipped += 1
-        elif row.get("holdout"):
+            continue
+        # An undated row predates the `ts` stamp and cannot be claimed for a
+        # window: excluded from any `since`, counted when there is none.
+        if since is not None and str(row.get("ts") or "") < since:
+            continue
+        if row.get("holdout"):
             holdout.append(row)
         elif row.get("rewritten", True):
             treated.append(row)
@@ -315,9 +332,15 @@ def _prefix_counterfactual(treated: list[dict]) -> dict | None:
     }
 
 
-def summarize(state_dir: Path) -> dict:
-    """Treated vs holdout on real provider counters. None means 'no data yet'."""
-    treated, holdout, passthrough, skipped = _partition_rows(ledger_path(state_dir))
+def summarize(state_dir: Path, *, since: str | None = None) -> dict:
+    """Treated vs holdout on real provider counters. None means 'no data yet'.
+
+    `since` is an ISO-8601 instant: rows stamped before it are dropped, so
+    "did this change help?" is one command rather than an offset computed by
+    hand. Rows written before `ts` existed carry none and are excluded by any
+    `since` — an undated row cannot be claimed for a window.
+    """
+    treated, holdout, passthrough, skipped = _partition_rows(ledger_path(state_dir), since=since)
 
     mean_cost_t = _mean_cost(treated)
     mean_cost_h = _mean_cost(holdout)

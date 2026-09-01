@@ -696,10 +696,49 @@ def doctor(
             _report_derived_storage(cfg)
         with contextlib.suppress(Exception):
             _report_dark_flags(cfg)
+            _report_dangling_supersessions(cfg)
     except Exception:  # noqa: S110
         pass
 
     sys.exit(0 if ok else 1)
+
+
+def dangling_supersession_count(memory_dir: Any) -> tuple[int, int]:
+    """`(total, dangling)` — supersession pointers, and how many name nothing.
+
+    `extra.superseded_by` is a promise: this memory is retired, read that one
+    instead. When the target is gone the promise is a dead end — the retired
+    memory is out of recall AND its replacement is unfindable, so the
+    knowledge is simply lost while every surface reports it as handled.
+    Measured on the live vault 2026-09-01: 118 of 238 pointers resolved to
+    nothing, 105 of them to memories deleted outright. Repairing them is a
+    write to the user's vault and stays a human decision; being unable to see
+    how many there are should not be.
+
+    A target counts as resolvable when a `.md` with that id exists anywhere
+    under `memory_dir`, INCLUDING `inactive/` — an archived successor is still
+    readable, and calling it dangling would overstate the damage.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(memory_dir)
+    if not root.is_dir():
+        return (0, 0)
+    known: set[str] = set()
+    pointers: list[str] = []
+    for path in root.rglob("*.md"):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        mid = re.search(r"(?m)^id:\s*(\S+)\s*$", text)
+        if mid:
+            known.add(mid.group(1).strip().strip("'\""))
+        sup = re.search(r"(?m)^\s+superseded_by:\s*(\S+)\s*$", text)
+        if sup:
+            pointers.append(sup.group(1).strip().strip("'\""))
+    return (len(pointers), sum(1 for t in pointers if t not in known))
 
 
 def _report_dark_flags(cfg: Any) -> None:
@@ -724,6 +763,18 @@ def _report_dark_flags(cfg: Any) -> None:
     console.print(
         f"[dim]•[/dim] dark flags: {len(dark)} shipped but never enabled{suffix} "
         "[dim](`memo dream graduate-flags --status`)[/dim]"
+    )
+
+
+def _report_dangling_supersessions(cfg: Any) -> None:
+    """Surface supersession pointers that name a memory nobody can read."""
+    total, dangling = dangling_supersession_count(cfg.memory_dir)
+    if not dangling:
+        return
+    console.print(
+        f"[dim]•[/dim] supersessions: {dangling} of {total} point at a memory that no "
+        "longer exists [dim](the retired side is out of recall and its replacement is "
+        "unfindable)[/dim]"
     )
 
 

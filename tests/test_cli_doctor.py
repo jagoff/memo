@@ -260,3 +260,30 @@ def test_trust_preflight_reports_legacy_schema_unavailable(tmp_cfg):
     assert report["ok"] is False
     assert report["identity_constraint"] == "unavailable"
     assert report["legacy_identity_rows"] == 1
+
+
+def test_dangling_supersession_pointers_are_counted(tmp_path):
+    """A retired memory whose replacement is gone is unrecoverable knowledge.
+
+    Live vault, 2026-09-01: 118 of 238 `superseded_by` pointers resolved to
+    nothing — 105 to memories deleted outright. The one that started this
+    (`43ff5a81`, the August diagnosis of the proxy's unfrozen keep-set) named
+    a successor that `memo get` answers `not found` for, so a correct finding
+    sat archived pointing at nothing for four months.
+    """
+    from memo.cli_doctor import dangling_supersession_count
+
+    memory_dir = tmp_path / "memories"
+    (memory_dir / "inactive").mkdir(parents=True)
+    (memory_dir / "a.md").write_text(
+        "---\nid: aaa\nextra:\n  superseded_by: bbb\n---\nbody\n", encoding="utf-8"
+    )
+    (memory_dir / "c.md").write_text(
+        "---\nid: ccc\nextra:\n  superseded_by: zzz\n---\nbody\n", encoding="utf-8"
+    )
+    (memory_dir / "b.md").write_text("---\nid: bbb\n---\nbody\n", encoding="utf-8")
+
+    total, dangling = dangling_supersession_count(memory_dir)
+
+    assert total == 2
+    assert dangling == 1  # ccc -> zzz, which exists nowhere
