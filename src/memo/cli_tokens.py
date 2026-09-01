@@ -276,15 +276,22 @@ def _by_transform_table(proxy: dict) -> Table:
     is_flag=True,
     help="Break down which transforms removed the most text (raw, not billed cost).",
 )
+@click.option(
+    "--since",
+    default=None,
+    help="Only proxy rows stamped at/after this ISO instant (e.g. 2026-09-01).",
+)
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
-def tokens_cmd(*, by_transform: bool = False, as_json: bool = False) -> None:
+def tokens_cmd(
+    *, by_transform: bool = False, since: str | None = None, as_json: bool = False
+) -> None:
     """Show memo's measured token cost/savings — real transcript + real proxy holdout."""
     from memo import token_meter
     from memo.proxy import meter as proxy_meter
 
     cfg = Config.from_env()
     measured = token_meter.summarize(cfg.state_dir)
-    proxy = proxy_meter.summarize(cfg.state_dir)
+    proxy = proxy_meter.summarize(cfg.state_dir, since=since)
 
     if as_json:
         click.echo(

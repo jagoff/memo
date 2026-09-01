@@ -9,6 +9,33 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Added
+
+- **`--strict-runtime` now checks the LaunchAgents too.** It compared `memo`
+  against `memo-mcp` and stopped, so a daemon launched from a third runtime was
+  invisible. `com.memo.proxy`'s plist hard-coded
+  `~/.local/share/memo/proxy-runtime/`, a venv nothing in this repo creates or
+  upgrades: on 2026-09-01 it was serving traffic on memo **4.14.3** against a
+  4.15.0 tool install, so twelve releases of proxy fixes had never executed
+  while every gate stayed green. Any `com.memo.*` agent whose program is a
+  `memo` binary outside the active runtime is now a warning naming the
+  `memo ops install` that repoints it. Agents launching a wrapper script
+  (`com.memo.nightly`) are skipped — a check that fires on a healthy install is
+  one nobody reads.
+- **Ledger rows carry a timestamp, and `memo tokens --since`.** Without one the
+  ledger only answered "all of history": comparing the prefix weight before and
+  after a proxy restart meant counting lines and hard-coding the offset. Rows
+  written before the stamp existed carry none and are excluded from any
+  `--since` — an undated row cannot be claimed for a window.
+- **`memo doctor` counts supersession pointers that name nothing.**
+  `extra.superseded_by` promises "this is retired, read that instead"; when the
+  target is gone the retired memory is out of recall AND its replacement is
+  unfindable, so the knowledge is lost while every surface reports it handled.
+  Measured on the live vault: **85 of 238**. The August diagnosis of the proxy's
+  unfrozen keep-set was one of them — a correct finding that sat archived
+  pointing at nothing for four months. Repair writes to the user's vault and
+  stays a human decision; seeing the count should not.
+
 ## [4.15.0] - 2026-08-31
 
 ### Fixed
