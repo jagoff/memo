@@ -834,6 +834,20 @@ def eval_recall_cmd(
             )
         sys.exit(0 if against_result.passed else 1)
 
+    quarantined = eval_recall.retired_prompts(
+        labels, lambda pref: eval_recall._memory_exists(mem, pref)
+    )
+    if quarantined and not as_json:
+        console.print(
+            f"[yellow]⚠[/yellow] {len(quarantined)} prompt(s) excluded from precision: "
+            "their expect_ids ground truth is no longer in the corpus "
+            "(archived, superseded or merged). Re-point them at the records "
+            "that replaced them:",
+            markup=False,
+        )
+        for text, ids in quarantined:
+            console.print(f"    {text[:64]!r} -> {', '.join(ids)}", markup=False)
+
     if update_baseline:
         # Persist the FULL metrics (precision/noise ∪ avoid@k / avoid_leak@k) so
         # check_gate can enforce the ⛔ coverage/leakage floors — bare

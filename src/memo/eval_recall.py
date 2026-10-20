@@ -499,6 +499,44 @@ def hit_is_noise(rec: Any, prompt: Prompt, labels: LabelSet) -> bool:
     return _is_noise(rec, labels) or _id_matches(getattr(rec, "id", ""), prompt.avoid_ids)
 
 
+def retired_prompts(labels: LabelSet, exists: Callable[[str], bool]) -> list[tuple[str, list[str]]]:
+    """Prompts whose ENTIRE `expect_ids` ground truth is gone from the corpus.
+
+    memo archives, supersedes and merges memories every night, by design. The
+    curated label set has no lifecycle coupling to the corpus it labels, so a
+    label quietly stops being satisfiable the moment maintenance retires the
+    note it names. Scoring that prompt as a retrieval miss is simply the wrong
+    measurement: precision@k drops, nothing in retrieval changed, and the
+    number stops being comparable to a baseline taken while the note was live.
+
+    So those prompts are quarantined — excluded from precision and counted,
+    never silently charged to the ranker. A PARTIALLY retired label is left
+    alone: a surviving id can still satisfy it.
+    """
+    out: list[tuple[str, list[str]]] = []
+    for prompt in labels.prompts:
+        if not prompt.expect_ids:
+            continue
+        if not any(exists(e) for e in prompt.expect_ids):
+            out.append((prompt.text, list(prompt.expect_ids)))
+    return out
+
+
+def _memory_exists(mem: Any, id_prefix: str) -> bool:
+    """Can `id_prefix` still be returned by search on this corpus?
+
+    `Memory.get` is the right oracle rather than a raw index lookup: it reports
+    None for a soft-deleted row too, and a memory the archive pass retired is
+    exactly as unreachable to the ranker as one that was never saved.
+    """
+    try:
+        return mem.get(id_prefix) is not None
+    except Exception:
+        # An ambiguous prefix means at least one record matched; treat the
+        # ground truth as present rather than quarantining a live label.
+        return True
+
+
 def _id_matches(hit_id: str, expect_ids: list[str]) -> bool:
     a = (hit_id or "").strip().lower()
     for raw in expect_ids:
@@ -592,6 +630,9 @@ class Row:
     hub_noise_rate: float = 0.0
     latency_ms_graph: float = 0.0
     latency_ms_p50: float = 0.0
+    # Prompts excluded from precision because their expect_ids ground truth has
+    # been retired from the live corpus (see `retired_prompts`).
+    quarantined: int = 0
     detail: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -861,10 +902,12 @@ def _run_config_inner(
         _excl.add(FAILURE_PATTERN_TYPE)
     exclude_types = _excl or None
     exclude_tags = uncertain_exclusion()
+    retired = retired_prompts(labels, lambda pref: _memory_exists(mem, pref))
+    retired_texts = {t for t, _ in retired}
     for index, prompt in enumerate(labels.prompts, start=1):
         if progress is not None:
             progress(cfg, index, len(labels.prompts))
-        scored = prompt.relevant or bool(prompt.expect_ids)
+        scored = (prompt.relevant or bool(prompt.expect_ids)) and prompt.text not in retired_texts
         query = (
             f"{labels.session_context}\n{prompt.text}"
             if cfg.context and labels.session_context
@@ -1017,6 +1060,7 @@ def _run_config_inner(
         hub_noise_rate=graph_metrics["hub_noise_rate"],
         latency_ms_graph=graph_metrics["latency_ms_graph"],
         latency_ms_p50=round(lat[len(lat) // 2], 1) if lat else 0.0,
+        quarantined=len(retired),
         detail=detail,
     )
 
@@ -1323,7 +1367,14 @@ def full_gate_metrics(rows: list[Row]) -> dict[str, Any]:
     leak ceiling 1.0) and the ``config`` key (comparison falls back to the
     current best config, as before).
     """
-    return {"config": best_row(rows).config, **gate_metrics(rows), **avoid_gate_metrics(rows)}
+    return {
+        "config": best_row(rows).config,
+        # How much ground truth was already retired when this was blessed, so
+        # the gate can catch FURTHER erosion without inventing a threshold.
+        "quarantined": best_row(rows).quarantined,
+        **gate_metrics(rows),
+        **avoid_gate_metrics(rows),
+    }
 
 
 def baseline_payload(
@@ -1485,6 +1536,24 @@ def check_gate(
         config_note += f" (baseline measured {baseline_config!r})"
     if gated.config != current_best.config:
         config_note += f" (pinned; {current_best.config!r} wins this run)"
+
+    # Label erosion: more prompts unscoreable than when the baseline was
+    # blessed means the corpus retired more ground truth. Gated on CHANGE, so
+    # the rot already present at seed time does not block every push, and
+    # repairing labels (a lower count) is never a failure.
+    b_quarantined = baseline.get("quarantined")
+    if b_quarantined is not None and gated.quarantined > int(b_quarantined):
+        message = (
+            f"FAIL — label set eroded: {gated.quarantined} prompts now have no "
+            f"live ground truth, up from {int(b_quarantined)} at baseline. Their "
+            "expect_ids name memories maintenance has since archived or merged, "
+            "so they cannot be satisfied by any ranker. Re-point them at the "
+            "records that replaced them (`memo eval recall --labels <set>` lists "
+            "them), then refresh the baseline."
+        )
+        return GateResult(
+            False, message, gated.precision_at_k, gated.noise_at_k, bp, bn, corpus_changed
+        )
 
     prec_ok = gated.precision_at_k >= bp - tol
     noise_ok = gated.noise_at_k <= bn + tol
