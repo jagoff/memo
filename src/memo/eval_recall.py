@@ -273,6 +273,32 @@ class Cfg:
     live: bool = False
 
 
+# The live config's display name embeds the live mode and floor, both of which
+# the tuner moves. `gate_config_key` collapses every variant onto this prefix so
+# the gate keeps its grip on the config across a knob move.
+_LIVE_CONFIG_PREFIX = "L live"
+
+
+def gate_config_key(config: str) -> str:
+    """Stable identity for gate pinning, derived from a config's display name.
+
+    The grid configs name a PINNED floor (`A vec/0.60/keep`), so their display
+    name IS their identity. The live config does not: it is defined as "whatever
+    the hook ranks with right now", and its name renders the floor it inherited
+    (`L live/vec/0.4`) — a value the dream tuner rewrites in the overlay.
+
+    Pinning the gate on that display name therefore breaks it the moment the
+    tuner does its job: the baseline names a config no later run can reproduce,
+    the gate fails on identity for EVERY diff, and the precision delta it exists
+    to catch is never computed. That is the "a gate that cannot fail is worse
+    than no gate" shape, one layer up from the knob.
+
+    So live variants collapse onto one key. A floor move is then measured, not
+    excused: it shows up as a precision/noise delta on a comparable config.
+    """
+    return _LIVE_CONFIG_PREFIX if config.startswith(_LIVE_CONFIG_PREFIX) else config
+
+
 def live_config() -> Cfg:
     """The config that mirrors what the recall hook actually runs today.
 
@@ -297,7 +323,7 @@ def live_config() -> Cfg:
     mode = flag_str("MEMO_RECALL_MODE") or "vec"
     floor = flag_float("MEMO_RECALL_MIN_SIM")
     return Cfg(
-        f"L live/{mode}/{0.5 if floor is None else floor:g}",
+        f"{_LIVE_CONFIG_PREFIX}/{mode}/{0.5 if floor is None else floor:g}",
         mode,
         0.5 if floor is None else floor,  # descriptive; `live` inherits at runtime
         exclude_archived=True,
@@ -1437,6 +1463,10 @@ def check_gate(
     if baseline_config:
         gated = next((r for r in rows if r.config == baseline_config), None)
         if gated is None:
+            # Same config, renamed by a knob move (live floor/mode): compare it.
+            baseline_key = gate_config_key(baseline_config)
+            gated = next((r for r in rows if gate_config_key(r.config) == baseline_key), None)
+        if gated is None:
             ran = ", ".join(r.config for r in rows)
             message = (
                 f"FAIL — gated config {baseline_config!r} not evaluated this run "
@@ -1451,6 +1481,8 @@ def check_gate(
 
     # The config the numbers below describe, on both sides of the comparison.
     config_note = f"config {gated.config!r}"
+    if baseline_config and gated.config != baseline_config:
+        config_note += f" (baseline measured {baseline_config!r})"
     if gated.config != current_best.config:
         config_note += f" (pinned; {current_best.config!r} wins this run)"
 

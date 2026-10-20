@@ -469,6 +469,46 @@ def test_check_gate_fails_loudly_when_pinned_config_absent_from_run():
     assert "not evaluated" in res.message
 
 
+def test_check_gate_pins_live_config_across_a_tuner_floor_move():
+    # The live config's display name embeds the live floor, and the tuner moves
+    # that floor through the overlay. The baseline was blessed at 0.5; this run
+    # ranks at 0.4. Identity has to survive the knob move, or the gate fails on
+    # a name mismatch for EVERY diff and never compares the metric it exists to
+    # protect — a floor change that costs recall is precisely what it must catch.
+    rows = [eval_recall.Row(config="L live/vec/0.4", precision_at_k=0.316, noise_at_k=0.0)]
+    baseline = {"config": "L live/vec/0.5", "precision_at_k": 0.53, "noise_at_k": 0.041}
+
+    res = eval_recall.check_gate(rows, baseline)
+
+    assert not res.passed
+    assert "precision@k" in res.message  # metric comparison, not identity
+    assert "not evaluated" not in res.message
+    assert "L live/vec/0.5" in res.message  # the floor the baseline was measured at
+    assert "L live/vec/0.4" in res.message  # the floor this run ranked at
+
+
+def test_check_gate_live_pin_passes_when_precision_holds_at_a_new_floor():
+    rows = [eval_recall.Row(config="L live/vec/0.45", precision_at_k=0.55, noise_at_k=0.02)]
+    baseline = {"config": "L live/vec/0.5", "precision_at_k": 0.53, "noise_at_k": 0.041}
+
+    res = eval_recall.check_gate(rows, baseline)
+
+    assert res.passed
+
+
+def test_check_gate_does_not_collapse_distinct_grid_configs():
+    # Only the live config collapses onto a stable key. A grid config names a
+    # PINNED floor, so a baseline on one grid config must never be compared
+    # against another — that would be the apples-to-oranges the pin prevents.
+    rows = [eval_recall.Row(config="A vec/0.60/keep", precision_at_k=0.9, noise_at_k=0.0)]
+    baseline = {"config": "B vec/0.72/excl", "precision_at_k": 0.6, "noise_at_k": 0.1}
+
+    res = eval_recall.check_gate(rows, baseline)
+
+    assert not res.passed
+    assert "not evaluated" in res.message
+
+
 def test_check_gate_pinned_config_passes_when_it_holds_even_if_another_wins():
     rows = [
         eval_recall.Row(config="cfgA", precision_at_k=0.6, noise_at_k=0.1),
