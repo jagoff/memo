@@ -587,3 +587,34 @@ def test_against_anchors_the_repo_root_on_the_invocation_cwd(tmp_path, monkeypat
     )
 
     assert seen == [Path.cwd()]
+
+
+def test_gate_verdict_keeps_its_bracketed_attribution(capsys) -> None:
+    # Gate messages carry their own brackets — `FAIL [code · config 'L live/...']`
+    # — naming whether the drop is code-attributable and which config the numbers
+    # describe. rich reads those as style tags and DELETES them, so the terminal
+    # printed `FAIL  — precision@k ...` and the attribution never reached anyone.
+    from memo import cli_eval
+
+    cli_eval._print_verdict(
+        "recall gate",
+        passed=False,
+        message="FAIL [confounded · config 'L live/vec/0.4' (baseline measured "
+        "'L live/vec/0.5')] — precision@k 0.316 < baseline 0.530",
+    )
+
+    # rich hard-wraps to the console width, so compare on collapsed whitespace.
+    out = " ".join(capsys.readouterr().out.split())
+    assert "[confounded · config 'L live/vec/0.4'" in out
+    assert "(baseline measured 'L live/vec/0.5')]" in out
+    assert "precision@k 0.316 < baseline 0.530" in out
+
+
+def test_gate_verdict_passes_label_and_mark(capsys) -> None:
+    from memo import cli_eval
+
+    cli_eval._print_verdict("token gate", passed=True, message="PASS — no regression")
+
+    out = capsys.readouterr().out
+    assert "✓" in out
+    assert "token gate: PASS — no regression" in out
