@@ -14,6 +14,11 @@ Persistent, searchable memory for Claude Code, Codex, Cursor, Cline, Devin, and 
 [![MCP](https://img.shields.io/badge/MCP-server-3b82f6.svg)](https://modelcontextprotocol.io)
 [![MCP Toplist](https://mcptoplist.com/badge/io.github.jagoff%2Fmemo.svg)](https://mcptoplist.com/server/io.github.jagoff%2Fmemo)
 
+<!-- Independent MCP review cards. Both self-update: grade, tool count and
+     version are rendered server-side, so nothing here goes stale. -->
+<a href="https://mcprush.com/to/mlx-memo-mcp?ref=badge"><img src="https://mcprush.com/badge/mlx-memo-mcp/card.svg" alt="mlx-memo MCP server on mcprush: security A, high access, no sign-in, works with 14 clients" width="380" height="200" loading="lazy" /></a>
+<a href="https://glama.ai/mcp/servers/jagoff/memo"><img src="https://glama.ai/mcp/servers/jagoff/memo/badges/card.svg" alt="memo MCP server rated A on Glama: tool definitions rated A, 60 tools" width="380" height="200" loading="lazy" /></a>
+
 ![Save a fact once — every later session recalls it automatically, all stored locally.](https://raw.githubusercontent.com/jagoff/memo/master/docs/demo.gif)
 
 ---
