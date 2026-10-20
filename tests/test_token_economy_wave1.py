@@ -105,12 +105,13 @@ def test_crush_cache_evict_expired_with_multiple_entries():
             evicted = cache.evict_expired(ttl_days=30)
             assert evicted == 2
 
-            # Fresh entry survived
+            # Fresh entry survived; the expired one is gone. Both reads stay
+            # INSIDE the frozen clock: outside it they run at wall-clock, so the
+            # "fresh" entry ages past the default TTL and the test starts failing
+            # on a date with nothing to do with eviction.
             assert cache.retrieve("4e100000deadbeef", ttl_days=30) is not None
-
-        # Verify fresh entry still there
-        assert cache.retrieve("4e100000deadbeef") == json.dumps({"data": "new"})
-        assert cache.retrieve("01d10000deadbeef") is None
+            assert cache.retrieve("4e100000deadbeef") == json.dumps({"data": "new"})
+            assert cache.retrieve("01d10000deadbeef") is None
 
 
 def test_crush_cache_retrieve_respects_ttl_parameter():

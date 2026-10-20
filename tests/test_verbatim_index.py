@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import stat
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,17 @@ def _line(role: str, text: str, ts: str) -> str:
             "timestamp": ts,
         }
     )
+
+
+def _recent_ts(seconds_ago: int = 0) -> str:
+    """A transcript timestamp inside the retention window, relative to now.
+
+    `run_verbatim_index_pass` ends with `prune_older_than(MEMO_VERBATIM_MAX_DAYS)`
+    (default 90), so a fixture with a hard-coded date is a time bomb: it reports
+    `turns_indexed` and then the trailing prune deletes the very rows it counted,
+    the moment wall-clock drifts past the window. Keep pass fixtures relative.
+    """
+    return (datetime.now(UTC) - timedelta(seconds=seconds_ago)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def _write_transcript(path: Path, lines: list[str]) -> None:
@@ -146,8 +158,8 @@ def test_pass_ingests_turns(cfg: Config, claude_projects_root: Path):
     _write_transcript(
         f,
         [
-            _line("user", _long("hello there, a long enough turn"), "2026-07-13T10:00:00.000Z"),
-            _line("assistant", _long("hi back, also long enough"), "2026-07-13T10:00:05.000Z"),
+            _line("user", _long("hello there, a long enough turn"), _recent_ts(5)),
+            _line("assistant", _long("hi back, also long enough"), _recent_ts(0)),
         ],
     )
     result = run_verbatim_index_pass(cfg)
@@ -167,7 +179,7 @@ def test_second_run_skips_unchanged(cfg: Config, claude_projects_root: Path):
     f = claude_projects_root / "sess-1.jsonl"
     _write_transcript(
         f,
-        [_line("user", _long("hello there, a long enough turn"), "2026-07-13T10:00:00.000Z")],
+        [_line("user", _long("hello there, a long enough turn"), _recent_ts(5))],
     )
     first = run_verbatim_index_pass(cfg)
     assert first["sessions_indexed"] == 1
@@ -181,17 +193,15 @@ def test_grown_file_reingests_whole_session(cfg: Config, claude_projects_root: P
     f = claude_projects_root / "sess-1.jsonl"
     _write_transcript(
         f,
-        [_line("user", _long("hello there, a long enough turn"), "2026-07-13T10:00:00.000Z")],
+        [_line("user", _long("hello there, a long enough turn"), _recent_ts(5))],
     )
     run_verbatim_index_pass(cfg)
 
     _write_transcript(
         f,
         [
-            _line("user", _long("hello there, a long enough turn"), "2026-07-13T10:00:00.000Z"),
-            _line(
-                "assistant", _long("a brand new second turn appended"), "2026-07-13T10:00:05.000Z"
-            ),
+            _line("user", _long("hello there, a long enough turn"), _recent_ts(5)),
+            _line("assistant", _long("a brand new second turn appended"), _recent_ts(0)),
         ],
     )
     result = run_verbatim_index_pass(cfg)
@@ -212,7 +222,7 @@ def test_dry_run_writes_nothing(cfg: Config, tmp_path: Path):
     f = root / "sess-1.jsonl"
     _write_transcript(
         f,
-        [_line("user", _long("hello there, a long enough turn"), "2026-07-13T10:00:00.000Z")],
+        [_line("user", _long("hello there, a long enough turn"), _recent_ts(5))],
     )
     result = run_verbatim_index_pass(cfg, root=root, dry_run=True)
     assert result["status"] == "ok"
@@ -241,7 +251,7 @@ def test_index_files_are_private(cfg: Config, claude_projects_root: Path):
     f = claude_projects_root / "sess-private.jsonl"
     _write_transcript(
         f,
-        [_line("user", _long("private indexed transcript turn"), "2026-07-13T10:00:00Z")],
+        [_line("user", _long("private indexed transcript turn"), _recent_ts(5))],
     )
 
     result = run_verbatim_index_pass(cfg)
@@ -256,7 +266,7 @@ def test_never_raises_on_store_failure(cfg: Config, claude_projects_root: Path, 
     f = claude_projects_root / "sess-1.jsonl"
     _write_transcript(
         f,
-        [_line("user", _long("hello there, a long enough turn"), "2026-07-13T10:00:00.000Z")],
+        [_line("user", _long("hello there, a long enough turn"), _recent_ts(5))],
     )
 
     def _boom(*args, **kwargs):
