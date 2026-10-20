@@ -529,11 +529,19 @@ def _memory_exists(mem: Any, id_prefix: str) -> bool:
     None for a soft-deleted row too, and a memory the archive pass retired is
     exactly as unreachable to the ranker as one that was never saved.
     """
+    from memo.errors import MemoError
+
+    getter = getattr(mem, "get", None)
+    if getter is None:
+        # A retrieval-only double (several harness tests pass one) cannot
+        # resolve ids. Report present: quarantining on an unanswerable question
+        # would silently drop prompts from precision.
+        return True
     try:
-        return mem.get(id_prefix) is not None
-    except Exception:
-        # An ambiguous prefix means at least one record matched; treat the
-        # ground truth as present rather than quarantining a live label.
+        return getter(id_prefix) is not None
+    except MemoError:
+        # An ambiguous prefix matched at least one record; treat the ground
+        # truth as present rather than quarantining a live label.
         return True
 
 
@@ -1399,6 +1407,71 @@ def baseline_payload(
     }
 
 
+def _identity_mismatch_message(
+    baseline: dict[str, Any], labels_fingerprint: str | None, k: int | None
+) -> str | None:
+    """Reasons the baseline is not comparable at all, independent of any metric.
+
+    A changed label set and a different top-K both make the saved numbers
+    describe a different measurement, so they fail fast and loudly rather than
+    quietly comparing precision@3 against precision@5.
+    """
+    baseline_fingerprint = str(baseline.get("labels_fingerprint") or "")
+    if labels_fingerprint and baseline_fingerprint and labels_fingerprint != baseline_fingerprint:
+        return (
+            "FAIL — label set changed "
+            f"({baseline_fingerprint} -> {labels_fingerprint}); verify the prior label set, "
+            "then refresh the baseline with --update-baseline"
+        )
+    baseline_k = baseline.get("k")
+    if k is not None and baseline_k is not None and int(baseline_k) != int(k):
+        return (
+            f"FAIL — k mismatch (baseline k={int(baseline_k)}, current k={int(k)}); "
+            "the baseline was measured at a different top-K — reseed it at this k "
+            "with --update-baseline, or run the gate at the baseline k"
+        )
+    return None
+
+
+def _pin_row(rows: list[Row], baseline_config: str, *, default: Row) -> Row | None:
+    """The row the baseline pins, by exact name then by stable key.
+
+    The key fallback is what lets the pin survive a tuner knob move: the live
+    config's display name carries the floor it inherited, so an exact match
+    misses the moment that floor changes (see :func:`gate_config_key`).
+
+    A legacy baseline that recorded no config falls back to ``default`` (the
+    current best), as before. A baseline that names a config this run cannot
+    produce returns None, so the caller fails loudly instead of comparing
+    apples to oranges.
+    """
+    if not baseline_config:
+        return default
+    exact = next((r for r in rows if r.config == baseline_config), None)
+    if exact is not None:
+        return exact
+    key = gate_config_key(baseline_config)
+    return next((r for r in rows if gate_config_key(r.config) == key), None)
+
+
+def _label_erosion_message(current: int, baseline_count: Any) -> str | None:
+    """Wording for a label set that lost more ground truth than at baseline.
+
+    Gated on CHANGE, not on a threshold: the rot already present when the
+    baseline was blessed must not block every push, and repairing labels (a
+    LOWER count) can never read as a regression.
+    """
+    if baseline_count is None or current <= int(baseline_count):
+        return None
+    return (
+        f"FAIL — label set eroded: {current} prompts now have no live ground "
+        f"truth, up from {int(baseline_count)} at baseline. Their expect_ids name "
+        "memories maintenance has since archived or merged, so no ranker can "
+        "satisfy them. Re-point them at the records that replaced them "
+        "(`memo eval recall --labels <set>` lists them), then refresh the baseline."
+    )
+
+
 def _gate_failure_message(
     parts: list[str],
     *,
@@ -1487,48 +1560,25 @@ def check_gate(
     )
 
     # --- identity guards (fail fast, before any metric comparison) ---
-    baseline_fingerprint = str(baseline.get("labels_fingerprint") or "")
-    if labels_fingerprint and baseline_fingerprint and labels_fingerprint != baseline_fingerprint:
-        message = (
-            "FAIL — label set changed "
-            f"({baseline_fingerprint} -> {labels_fingerprint}); verify the prior label set, "
-            "then refresh the baseline with --update-baseline"
-        )
+    identity = _identity_mismatch_message(baseline, labels_fingerprint, k)
+    if identity is not None:
         return GateResult(
-            False, message, current_best.precision_at_k, current_best.noise_at_k, bp, bn
-        )
-
-    baseline_k = baseline.get("k")
-    if k is not None and baseline_k is not None and int(baseline_k) != int(k):
-        message = (
-            f"FAIL — k mismatch (baseline k={int(baseline_k)}, current k={int(k)}); "
-            "the baseline was measured at a different top-K — reseed it at this k "
-            "with --update-baseline, or run the gate at the baseline k"
-        )
-        return GateResult(
-            False, message, current_best.precision_at_k, current_best.noise_at_k, bp, bn
+            False, identity, current_best.precision_at_k, current_best.noise_at_k, bp, bn
         )
 
     # Pin the comparison to the baseline's winning config when it recorded one;
     # else (legacy baseline) fall back to the current best config.
-    if baseline_config:
-        gated = next((r for r in rows if r.config == baseline_config), None)
-        if gated is None:
-            # Same config, renamed by a knob move (live floor/mode): compare it.
-            baseline_key = gate_config_key(baseline_config)
-            gated = next((r for r in rows if gate_config_key(r.config) == baseline_key), None)
-        if gated is None:
-            ran = ", ".join(r.config for r in rows)
-            message = (
-                f"FAIL — gated config {baseline_config!r} not evaluated this run "
-                f"(ran: {ran}); the baseline pins a config this run did not measure — "
-                "select it, or refresh the baseline with --update-baseline"
-            )
-            return GateResult(
-                False, message, current_best.precision_at_k, current_best.noise_at_k, bp, bn
-            )
-    else:
-        gated = current_best
+    gated = _pin_row(rows, baseline_config, default=current_best)
+    if gated is None:
+        ran = ", ".join(r.config for r in rows)
+        message = (
+            f"FAIL — gated config {baseline_config!r} not evaluated this run "
+            f"(ran: {ran}); the baseline pins a config this run did not measure — "
+            "select it, or refresh the baseline with --update-baseline"
+        )
+        return GateResult(
+            False, message, current_best.precision_at_k, current_best.noise_at_k, bp, bn
+        )
 
     # The config the numbers below describe, on both sides of the comparison.
     config_note = f"config {gated.config!r}"
@@ -1537,22 +1587,10 @@ def check_gate(
     if gated.config != current_best.config:
         config_note += f" (pinned; {current_best.config!r} wins this run)"
 
-    # Label erosion: more prompts unscoreable than when the baseline was
-    # blessed means the corpus retired more ground truth. Gated on CHANGE, so
-    # the rot already present at seed time does not block every push, and
-    # repairing labels (a lower count) is never a failure.
-    b_quarantined = baseline.get("quarantined")
-    if b_quarantined is not None and gated.quarantined > int(b_quarantined):
-        message = (
-            f"FAIL — label set eroded: {gated.quarantined} prompts now have no "
-            f"live ground truth, up from {int(b_quarantined)} at baseline. Their "
-            "expect_ids name memories maintenance has since archived or merged, "
-            "so they cannot be satisfied by any ranker. Re-point them at the "
-            "records that replaced them (`memo eval recall --labels <set>` lists "
-            "them), then refresh the baseline."
-        )
+    erosion = _label_erosion_message(gated.quarantined, baseline.get("quarantined"))
+    if erosion is not None:
         return GateResult(
-            False, message, gated.precision_at_k, gated.noise_at_k, bp, bn, corpus_changed
+            False, erosion, gated.precision_at_k, gated.noise_at_k, bp, bn, corpus_changed
         )
 
     prec_ok = gated.precision_at_k >= bp - tol

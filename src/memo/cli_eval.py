@@ -551,6 +551,24 @@ def _validate_against_flags(
         )
 
 
+def _print_quarantine(quarantined: list[tuple[str, list[str]]], *, quiet: bool = False) -> None:
+    """Name the prompts excluded from precision, so they can be re-pointed.
+
+    The gate's erosion message promises this listing; without it the operator
+    is told a count and given nothing to act on.
+    """
+    if quiet or not quarantined:
+        return
+    console.print(
+        f"⚠ {len(quarantined)} prompt(s) excluded from precision: their expect_ids "
+        "ground truth is no longer in the corpus (archived, superseded or merged). "
+        "Re-point them at the records that replaced them:",
+        markup=False,
+    )
+    for text, ids in quarantined:
+        console.print(f"    {text[:64]!r} -> {', '.join(ids)}", markup=False)
+
+
 def _print_verdict(label: str, *, passed: bool, message: str) -> None:
     """Print a gate verdict without letting rich eat its attribution.
 
@@ -834,19 +852,10 @@ def eval_recall_cmd(
             )
         sys.exit(0 if against_result.passed else 1)
 
-    quarantined = eval_recall.retired_prompts(
-        labels, lambda pref: eval_recall._memory_exists(mem, pref)
+    _print_quarantine(
+        eval_recall.retired_prompts(labels, lambda pref: eval_recall._memory_exists(mem, pref)),
+        quiet=as_json,
     )
-    if quarantined and not as_json:
-        console.print(
-            f"[yellow]⚠[/yellow] {len(quarantined)} prompt(s) excluded from precision: "
-            "their expect_ids ground truth is no longer in the corpus "
-            "(archived, superseded or merged). Re-point them at the records "
-            "that replaced them:",
-            markup=False,
-        )
-        for text, ids in quarantined:
-            console.print(f"    {text[:64]!r} -> {', '.join(ids)}", markup=False)
 
     if update_baseline:
         # Persist the FULL metrics (precision/noise ∪ avoid@k / avoid_leak@k) so
